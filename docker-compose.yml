@@ -1,6 +1,31 @@
 version: '3.8'
 
 services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: documind-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/data:/app/data
+      - ./backend/logs:/app/logs
+      - ./.env:/app/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - QDRANT_HOST=qdrant
+      - REDIS_HOST=redis
+    env_file:
+      - .env
+    depends_on:
+      - qdrant
+      - redis
+    restart: unless-stopped
+    networks:
+      - documind-network
+
   qdrant:
     image: qdrant/qdrant:latest
     container_name: documind-qdrant
