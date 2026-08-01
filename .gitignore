@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Virtual environments
+backend/venv/
+backend/env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.kiro/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Data
+backend/data/uploads/*
+backend/data/vectors/*
+!backend/data/uploads/.gitkeep
+!backend/data/vectors/.gitkeep
+
+# Logs
+backend/logs/*.log
+*.log
+!backend/logs/.gitkeep
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.hypothesis/
+coverage/
+
+# Build
+dist/
+build/
+*.egg-info/
+frontend/dist/
+frontend/build/
+
+# Dependencies
+node_modules/
+package-lock.json
+frontend/node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Documentation builds
+docs/_build/
+site/
