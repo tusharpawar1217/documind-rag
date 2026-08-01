@@ -3,66 +3,81 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   FileText,
   Trash2,
-  Download,
+  Loader,
   Calendar,
   HardDrive,
   Search,
-  Grid,
-  List,
-  Loader,
-  AlertCircle
+  RefreshCw,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { getDocuments, deleteDocument } from '../services/api'
+import { getDocuments, deleteDocument, getStatistics } from '../services/api'
 import './DocumentsPage.css'
 
 interface Document {
   document_id: string
   filename: string
-  upload_date: string
   file_size: number
-  total_pages: number
-  chunk_count: number
-  metadata?: Record<string, any>
+  upload_date: string
+  num_chunks: number
+  status: string
+}
+
+interface Statistics {
+  total_documents: number
+  total_chunks: number
+  total_size: number
 }
 
 const DocumentsPage = () => {
   const [documents, setDocuments] = useState<Document[]>([])
-  const [loading, setLoading] = useState(true)
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [statistics, setStatistics] = useState<Statistics | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
-  const [deleteLoading, setDeleteLoading] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
-  useEffect(() => {
-    fetchDocuments()
-  }, [])
-
-  const fetchDocuments = async () => {
-    setLoading(true)
+  const loadDocuments = async () => {
     try {
       const data = await getDocuments()
       setDocuments(data.documents || [])
     } catch (error: any) {
-      toast.error(error.message || 'Failed to fetch documents')
-    } finally {
-      setLoading(false)
+      toast.error(error.message || 'Failed to load documents')
     }
   }
 
-  const handleDelete = async (docId: string, filename: string) => {
+  const loadStatistics = async () => {
+    try {
+      const data = await getStatistics()
+      setStatistics(data)
+    } catch (error: any) {
+      console.error('Failed to load statistics:', error)
+    }
+  }
+
+  const loadData = async () => {
+    setIsLoading(true)
+    await Promise.all([loadDocuments(), loadStatistics()])
+    setIsLoading(false)
+  }
+
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  const handleDelete = async (documentId: string, filename: string) => {
     if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
       return
     }
 
-    setDeleteLoading(docId)
+    setDeletingId(documentId)
+
     try {
-      await deleteDocument(docId)
-      setDocuments(documents.filter((doc) => doc.document_id !== docId))
+      await deleteDocument(documentId)
       toast.success('Document deleted successfully')
+      await loadData()
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete document')
     } finally {
-      setDeleteLoading(null)
+      setDeletingId(null)
     }
   }
 
@@ -80,6 +95,8 @@ const DocumentsPage = () => {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     })
   }
 
@@ -87,14 +104,9 @@ const DocumentsPage = () => {
     doc.filename.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const totalSize = documents.reduce((sum, doc) => sum + doc.file_size, 0)
-  const totalPages = documents.reduce((sum, doc) => sum + doc.total_pages, 0)
-  const totalChunks = documents.reduce((sum, doc) => sum + doc.chunk_count, 0)
-
   return (
     <div className="documents-page">
       <div className="container">
-        {/* Header */}
         <motion.div
           className="documents-header"
           initial={{ opacity: 0, y: 20 }}
@@ -105,173 +117,157 @@ const DocumentsPage = () => {
             <h1>Documents</h1>
             <p>Manage your uploaded documents</p>
           </div>
+          <button className="btn btn-secondary" onClick={loadData}>
+            <RefreshCw size={18} />
+            Refresh
+          </button>
         </motion.div>
 
-        {/* Stats */}
+        {/* Statistics */}
+        {statistics && (
+          <motion.div
+            className="statistics-grid"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.4, delay: 0.1 }}
+          >
+            <div className="stat-card">
+              <div className="stat-icon">
+                <FileText size={24} />
+              </div>
+              <div className="stat-content">
+                <div className="stat-value">{statistics.total_documents}</div>
+                <div className="stat-label">Total Documents</div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon">
+                <HardDrive size={24} />
+              </div>
+              <div className="stat-content">
+                <div className="stat-value">
+                  {formatFileSize(statistics.total_size)}
+                </div>
+                <div className="stat-label">Total Size</div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon">
+                <FileText size={24} />
+              </div>
+              <div className="stat-content">
+                <div className="stat-value">{statistics.total_chunks}</div>
+                <div className="stat-label">Total Chunks</div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Search */}
         <motion.div
-          className="documents-stats"
+          className="search-bar"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
+          transition={{ duration: 0.4, delay: 0.2 }}
         >
-          <div className="stat-card">
-            <FileText size={24} />
-            <div className="stat-content">
-              <div className="stat-value">{documents.length}</div>
-              <div className="stat-label">Documents</div>
-            </div>
-          </div>
-          <div className="stat-card">
-            <HardDrive size={24} />
-            <div className="stat-content">
-              <div className="stat-value">{formatFileSize(totalSize)}</div>
-              <div className="stat-label">Total Size</div>
-            </div>
-          </div>
-          <div className="stat-card">
-            <FileText size={24} />
-            <div className="stat-content">
-              <div className="stat-value">{totalPages}</div>
-              <div className="stat-label">Total Pages</div>
-            </div>
-          </div>
-          <div className="stat-card">
-            <Grid size={24} />
-            <div className="stat-content">
-              <div className="stat-value">{totalChunks}</div>
-              <div className="stat-label">Chunks</div>
-            </div>
-          </div>
+          <Search className="search-icon" size={20} />
+          <input
+            type="text"
+            placeholder="Search documents..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="search-input"
+          />
         </motion.div>
 
-        {/* Controls */}
-        <motion.div
-          className="documents-controls"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-        >
-          <div className="search-box">
-            <Search size={18} />
-            <input
-              type="text"
-              placeholder="Search documents..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
+        {/* Documents List */}
+        {isLoading ? (
+          <div className="loading-state">
+            <Loader className="spin" size={48} />
+            <p>Loading documents...</p>
           </div>
+        ) : filteredDocuments.length === 0 ? (
+          <motion.div
+            className="empty-state"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5 }}
+          >
+            <FileText size={64} strokeWidth={1} />
+            <h3>
+              {searchQuery ? 'No documents found' : 'No documents yet'}
+            </h3>
+            <p>
+              {searchQuery
+                ? 'Try a different search term'
+                : 'Upload your first document to get started'}
+            </p>
+          </motion.div>
+        ) : (
+          <motion.div
+            className="documents-grid"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+          >
+            <AnimatePresence>
+              {filteredDocuments.map((doc, index) => (
+                <motion.div
+                  key={doc.document_id}
+                  className="document-card"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  transition={{ duration: 0.3, delay: index * 0.05 }}
+                  layout
+                >
+                  <div className="document-icon">
+                    <FileText size={32} />
+                  </div>
 
-          <div className="view-toggle">
-            <button
-              className={viewMode === 'grid' ? 'active' : ''}
-              onClick={() => setViewMode('grid')}
-            >
-              <Grid size={18} />
-            </button>
-            <button
-              className={viewMode === 'list' ? 'active' : ''}
-              onClick={() => setViewMode('list')}
-            >
-              <List size={18} />
-            </button>
-          </div>
-        </motion.div>
+                  <div className="document-info">
+                    <h3 className="document-name">{doc.filename}</h3>
 
-        {/* Documents */}
-        <div className="documents-container">
-          {loading ? (
-            <motion.div
-              className="loading-state"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-            >
-              <Loader className="spin" size={48} />
-              <p>Loading documents...</p>
-            </motion.div>
-          ) : filteredDocuments.length === 0 ? (
-            <motion.div
-              className="empty-state"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-            >
-              <FileText size={64} />
-              <h3>
-                {searchQuery ? 'No documents found' : 'No documents yet'}
-              </h3>
-              <p>
-                {searchQuery
-                  ? 'Try adjusting your search query'
-                  : 'Upload your first document to get started'}
-              </p>
-            </motion.div>
-          ) : (
-            <motion.div
-              className={`documents-${viewMode}`}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.5 }}
-            >
-              <AnimatePresence>
-                {filteredDocuments.map((doc, index) => (
-                  <motion.div
-                    key={doc.document_id}
-                    className="document-card"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    transition={{ duration: 0.3, delay: index * 0.05 }}
-                    whileHover={{ y: -4 }}
+                    <div className="document-meta">
+                      <div className="meta-item">
+                        <HardDrive size={14} />
+                        <span>{formatFileSize(doc.file_size)}</span>
+                      </div>
+                      <div className="meta-item">
+                        <Calendar size={14} />
+                        <span>{formatDate(doc.upload_date)}</span>
+                      </div>
+                      <div className="meta-item">
+                        <FileText size={14} />
+                        <span>{doc.num_chunks} chunks</span>
+                      </div>
+                    </div>
+
+                    <div className="document-status">
+                      <span className={`status-badge ${doc.status}`}>
+                        {doc.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    className="btn-delete"
+                    onClick={() => handleDelete(doc.document_id, doc.filename)}
+                    disabled={deletingId === doc.document_id}
                   >
-                    <div className="document-icon">
-                      <FileText size={viewMode === 'grid' ? 32 : 24} />
-                    </div>
-
-                    <div className="document-info">
-                      <h3 className="document-name">{doc.filename}</h3>
-
-                      <div className="document-meta">
-                        <div className="meta-item">
-                          <Calendar size={14} />
-                          <span>{formatDate(doc.upload_date)}</span>
-                        </div>
-                        <div className="meta-item">
-                          <HardDrive size={14} />
-                          <span>{formatFileSize(doc.file_size)}</span>
-                        </div>
-                        <div className="meta-item">
-                          <FileText size={14} />
-                          <span>{doc.total_pages} pages</span>
-                        </div>
-                      </div>
-
-                      <div className="document-stats">
-                        <span className="stat-badge">
-                          {doc.chunk_count} chunks
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="document-actions">
-                      <button
-                        className="btn-icon"
-                        onClick={() =>
-                          handleDelete(doc.document_id, doc.filename)
-                        }
-                        disabled={deleteLoading === doc.document_id}
-                      >
-                        {deleteLoading === doc.document_id ? (
-                          <Loader className="spin" size={18} />
-                        ) : (
-                          <Trash2 size={18} />
-                        )}
-                      </button>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </motion.div>
-          )}
-        </div>
+                    {deletingId === doc.document_id ? (
+                      <Loader className="spin" size={18} />
+                    ) : (
+                      <Trash2 size={18} />
+                    )}
+                  </button>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </motion.div>
+        )}
       </div>
     </div>
   )

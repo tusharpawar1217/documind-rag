@@ -2,79 +2,72 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Search,
-  Sparkles,
-  FileText,
-  Clock,
-  TrendingUp,
-  Filter,
   Loader,
-  ExternalLink,
+  FileText,
+  Sparkles,
+  Settings,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { searchDocuments } from '../services/api'
+import { queryDocuments } from '../services/api'
 import './SearchPage.css'
 
 interface SearchResult {
   chunk_id: string
   document_id: string
   document_name: string
-  page_number: number
   text: string
   score: number
-  metadata?: Record<string, any>
+  page_number?: number
+}
+
+interface QueryResponse {
+  query: string
+  results: SearchResult[]
+  response?: string
+  total_results: number
 }
 
 const SearchPage = () => {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<SearchResult[]>([])
-  const [loading, setLoading] = useState(false)
-  const [searchTime, setSearchTime] = useState(0)
-  const [showFilters, setShowFilters] = useState(false)
+  const [isSearching, setIsSearching] = useState(false)
+  const [results, setResults] = useState<QueryResponse | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
+  
+  // Search settings
   const [topK, setTopK] = useState(5)
   const [hybridAlpha, setHybridAlpha] = useState(0.5)
+  const [temperature, setTemperature] = useState(0.7)
 
-  const handleSearch = async () => {
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
     if (!query.trim()) {
       toast.error('Please enter a search query')
       return
     }
 
-    setLoading(true)
-    const startTime = Date.now()
-
+    setIsSearching(true)
+    
     try {
-      const data = await searchDocuments(query, topK, hybridAlpha)
-      const endTime = Date.now()
-      setSearchTime((endTime - startTime) / 1000)
-      setResults(data.results || [])
-      toast.success(`Found ${data.results?.length || 0} results`)
+      const data = await queryDocuments(query, topK, hybridAlpha, temperature)
+      setResults(data)
+      
+      if (data.results.length === 0) {
+        toast('No results found', { icon: '🔍' })
+      }
     } catch (error: any) {
       toast.error(error.message || 'Search failed')
-      setResults([])
+      setResults(null)
     } finally {
-      setLoading(false)
+      setIsSearching(false)
     }
-  }
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSearch()
-    }
-  }
-
-  const getScoreColor = (score: number) => {
-    if (score >= 0.8) return 'var(--success)'
-    if (score >= 0.6) return 'var(--accent-primary)'
-    return 'var(--warning)'
   }
 
   return (
     <div className="search-page">
       <div className="container">
-        {/* Search Header */}
         <motion.div
           className="search-header"
           initial={{ opacity: 0, y: 20 }}
@@ -82,222 +75,215 @@ const SearchPage = () => {
           transition={{ duration: 0.5 }}
         >
           <h1>Search Documents</h1>
-          <p>AI-powered hybrid search with precise citations</p>
+          <p>Ask questions and get AI-powered answers from your documents</p>
         </motion.div>
 
-        {/* Search Box */}
-        <motion.div
-          className="search-box-container"
+        {/* Search Form */}
+        <motion.form
+          className="search-form"
+          onSubmit={handleSearch}
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.1 }}
         >
-          <div className="search-box">
-            <div className="search-icon">
-              <Search size={24} />
-            </div>
+          <div className="search-input-wrapper">
+            <Search className="search-icon" size={20} />
             <input
               type="text"
-              className="search-input"
-              placeholder="Ask anything about your documents..."
+              placeholder="Ask a question about your documents..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyPress={handleKeyPress}
+              className="search-input"
+              disabled={isSearching}
             />
+            {isSearching && <Loader className="spin loading-icon" size={20} />}
+          </div>
+
+          <div className="search-actions">
             <button
-              className="search-button"
-              onClick={handleSearch}
-              disabled={loading}
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setShowSettings(!showSettings)}
             >
-              {loading ? (
-                <Loader className="spin" size={20} />
+              <Settings size={18} />
+              Settings
+              {showSettings ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={isSearching || !query.trim()}
+            >
+              {isSearching ? (
+                <>
+                  <Loader className="spin" size={18} />
+                  Searching...
+                </>
               ) : (
                 <>
-                  <Sparkles size={20} />
-                  <span>Search</span>
+                  <Sparkles size={18} />
+                  Search
                 </>
               )}
             </button>
           </div>
+        </motion.form>
 
-          {/* Filters Toggle */}
-          <button
-            className="filters-toggle"
-            onClick={() => setShowFilters(!showFilters)}
-          >
-            <Filter size={18} />
-            <span>Filters</span>
-            {showFilters ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-
-          {/* Filters Panel */}
-          <AnimatePresence>
-            {showFilters && (
-              <motion.div
-                className="filters-panel"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <div className="filter-group">
-                  <label>
-                    <span>Results (Top K)</span>
-                    <span className="filter-value">{topK}</span>
-                  </label>
-                  <input
-                    type="range"
-                    min="1"
-                    max="20"
-                    value={topK}
-                    onChange={(e) => setTopK(Number(e.target.value))}
-                    className="slider"
-                  />
+        {/* Settings Panel */}
+        <AnimatePresence>
+          {showSettings && (
+            <motion.div
+              className="settings-panel"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              <div className="setting-item">
+                <label>
+                  <span>Results Count</span>
+                  <span className="setting-value">{topK}</span>
+                </label>
+                <input
+                  type="range"
+                  min="1"
+                  max="10"
+                  value={topK}
+                  onChange={(e) => setTopK(Number(e.target.value))}
+                  className="slider"
+                />
+                <div className="slider-labels">
+                  <span>1</span>
+                  <span>10</span>
                 </div>
+              </div>
 
-                <div className="filter-group">
-                  <label>
-                    <span>Hybrid Alpha</span>
-                    <span className="filter-value">{hybridAlpha.toFixed(2)}</span>
-                  </label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.1"
-                    value={hybridAlpha}
-                    onChange={(e) => setHybridAlpha(Number(e.target.value))}
-                    className="slider"
-                  />
-                  <div className="filter-hint">
-                    0 = BM25 only, 1 = Vector only, 0.5 = Balanced
-                  </div>
+              <div className="setting-item">
+                <label>
+                  <span>Hybrid Search Weight</span>
+                  <span className="setting-value">{hybridAlpha.toFixed(2)}</span>
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={hybridAlpha}
+                  onChange={(e) => setHybridAlpha(Number(e.target.value))}
+                  className="slider"
+                />
+                <div className="slider-labels">
+                  <span>Keyword</span>
+                  <span>Semantic</span>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
+              </div>
 
-        {/* Search Stats */}
-        {results.length > 0 && (
-          <motion.div
-            className="search-stats"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.3 }}
-          >
-            <div className="stat-item">
-              <FileText size={18} />
-              <span>{results.length} Results</span>
-            </div>
-            <div className="stat-item">
-              <Clock size={18} />
-              <span>{searchTime.toFixed(2)}s</span>
-            </div>
-            <div className="stat-item">
-              <TrendingUp size={18} />
-              <span>Top Score: {(results[0]?.score * 100 || 0).toFixed(1)}%</span>
-            </div>
-          </motion.div>
-        )}
+              <div className="setting-item">
+                <label>
+                  <span>Response Creativity</span>
+                  <span className="setting-value">{temperature.toFixed(1)}</span>
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={temperature}
+                  onChange={(e) => setTemperature(Number(e.target.value))}
+                  className="slider"
+                />
+                <div className="slider-labels">
+                  <span>Precise</span>
+                  <span>Creative</span>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Results */}
-        <div className="results-container">
-          <AnimatePresence>
-            {loading && (
-              <motion.div
-                className="loading-state"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-              >
-                <Loader className="spin" size={48} />
-                <p>Searching documents...</p>
-              </motion.div>
-            )}
+        <AnimatePresence mode="wait">
+          {results && (
+            <motion.div
+              className="results-section"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.5 }}
+            >
+              {/* AI Response */}
+              {results.response && (
+                <motion.div
+                  className="ai-response"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.4, delay: 0.1 }}
+                >
+                  <div className="response-header">
+                    <Sparkles size={20} />
+                    <h3>AI Response</h3>
+                  </div>
+                  <div className="response-content">
+                    {results.response}
+                  </div>
+                </motion.div>
+              )}
 
-            {!loading && results.length === 0 && query && (
-              <motion.div
-                className="empty-state"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-              >
-                <Search size={64} />
-                <h3>No results found</h3>
-                <p>Try adjusting your search query or filters</p>
-              </motion.div>
-            )}
+              {/* Source Documents */}
+              {results.results.length > 0 && (
+                <div className="sources-section">
+                  <div className="sources-header">
+                    <FileText size={20} />
+                    <h3>Source Documents ({results.results.length})</h3>
+                  </div>
 
-            {!loading && results.length === 0 && !query && (
-              <motion.div
-                className="empty-state"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-              >
-                <Sparkles size={64} />
-                <h3>Start Searching</h3>
-                <p>Enter a query to search across all your documents</p>
-                <div className="example-queries">
-                  <h4>Example queries:</h4>
-                  <div className="query-tags">
-                    <button onClick={() => setQuery('What is machine learning?')}>
-                      What is machine learning?
-                    </button>
-                    <button onClick={() => setQuery('Explain neural networks')}>
-                      Explain neural networks
-                    </button>
-                    <button onClick={() => setQuery('Summary of key findings')}>
-                      Summary of key findings
-                    </button>
+                  <div className="sources-list">
+                    {results.results.map((result, index) => (
+                      <motion.div
+                        key={result.chunk_id}
+                        className="source-item"
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.3, delay: index * 0.1 }}
+                      >
+                        <div className="source-header">
+                          <div className="source-meta">
+                            <span className="source-rank">#{index + 1}</span>
+                            <span className="source-name">{result.document_name}</span>
+                            {result.page_number && (
+                              <span className="source-page">Page {result.page_number}</span>
+                            )}
+                          </div>
+                          <div className="source-score">
+                            <span className="score-label">Relevance</span>
+                            <span className="score-value">
+                              {(result.score * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                        </div>
+                        <div className="source-text">{result.text}</div>
+                      </motion.div>
+                    ))}
                   </div>
                 </div>
-              </motion.div>
-            )}
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-            {!loading && results.length > 0 && (
-              <div className="results-list">
-                {results.map((result, index) => (
-                  <motion.div
-                    key={result.chunk_id}
-                    className="result-card"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.4, delay: index * 0.1 }}
-                    whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                  >
-                    <div className="result-header">
-                      <div className="result-meta">
-                        <FileText size={18} />
-                        <span className="document-name">{result.document_name}</span>
-                        <span className="page-number">Page {result.page_number}</span>
-                      </div>
-                      <div
-                        className="result-score"
-                        style={{ color: getScoreColor(result.score) }}
-                      >
-                        {(result.score * 100).toFixed(1)}%
-                      </div>
-                    </div>
-
-                    <div className="result-content">
-                      <p>{result.text}</p>
-                    </div>
-
-                    <div className="result-footer">
-                      <div className="result-rank">#{index + 1}</div>
-                      <button className="result-action">
-                        <span>View Context</span>
-                        <ExternalLink size={16} />
-                      </button>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            )}
-          </AnimatePresence>
-        </div>
+        {/* Empty State */}
+        {!results && !isSearching && (
+          <motion.div
+            className="empty-state"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+          >
+            <Search size={64} strokeWidth={1} />
+            <h3>Start Searching</h3>
+            <p>Enter a question to search through your uploaded documents</p>
+          </motion.div>
+        )}
       </div>
     </div>
   )

@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import Layout from './components/Layout/Layout'
+import ConnectionStatus from './components/ConnectionStatus'
 import HomePage from './pages/HomePage'
 import UploadPage from './pages/UploadPage'
 import SearchPage from './pages/SearchPage'
@@ -10,6 +11,7 @@ function App() {
   return (
     <Router>
       <div className="grid-background" />
+      <ConnectionStatus />
       <Layout>
         <Routes>
           <Route path="/" element={<HomePage />} />

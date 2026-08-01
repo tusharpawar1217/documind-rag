@@ -14,6 +14,10 @@ const api = axios.create({
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK') {
+      return Promise.reject(new Error('Backend server is not running. Please start the backend first.'))
+    }
+    
     const message =
       error.response?.data?.detail ||
       error.response?.data?.message ||
@@ -37,7 +41,7 @@ export const uploadDocument = async (
   const formData = new FormData()
   formData.append('file', file)
 
-  const response = await api.post('/api/documents/upload', formData, {
+  const response = await api.post('/api/v1/documents/upload', formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
@@ -57,19 +61,19 @@ export const uploadDocument = async (
 
 // Get all documents
 export const getDocuments = async () => {
-  const response = await api.get('/api/documents')
+  const response = await api.get('/api/v1/documents')
   return response.data
 }
 
 // Get document by ID
 export const getDocument = async (documentId: string) => {
-  const response = await api.get(`/api/documents/${documentId}`)
+  const response = await api.get(`/api/v1/documents/${documentId}`)
   return response.data
 }
 
 // Delete document
 export const deleteDocument = async (documentId: string) => {
-  const response = await api.delete(`/api/documents/${documentId}`)
+  const response = await api.delete(`/api/v1/documents/${documentId}`)
   return response.data
 }
 
@@ -79,7 +83,7 @@ export const searchDocuments = async (
   topK: number = 5,
   hybridAlpha: number = 0.5
 ) => {
-  const response = await api.post('/api/search', {
+  const response = await api.post('/api/v1/search/query', {
     query,
     top_k: topK,
     hybrid_alpha: hybridAlpha,
@@ -94,10 +98,11 @@ export const queryDocuments = async (
   hybridAlpha: number = 0.5,
   temperature: number = 0.7
 ) => {
-  const response = await api.post('/api/query', {
+  const response = await api.post('/api/v1/search/query', {
     query,
     top_k: topK,
     hybrid_alpha: hybridAlpha,
+    generate_response: true,
     temperature,
   })
   return response.data
@@ -105,7 +110,7 @@ export const queryDocuments = async (
 
 // Get document statistics
 export const getStatistics = async () => {
-  const response = await api.get('/api/statistics')
+  const response = await api.get('/api/v1/documents/stats')
   return response.data
 }
 
