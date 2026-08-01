@@ -1,285 +1,245 @@
-# DocuMind RAG Multi-Document Intelligence System
+# DocuMind RAG - Multi-Document Intelligence System
 
-A production-grade RAG (Retrieval-Augmented Generation) system for intelligent multi-document question answering with precise page citations.
+A production-ready RAG (Retrieval-Augmented Generation) system for intelligent document processing and AI-powered question answering.
 
 ## 🎯 Features
 
-- 📄 **Multi-Document Support**: Upload and query multiple PDF documents
-- 🔍 **Hybrid Search**: Combines semantic similarity (70%) + BM25 keyword matching (30%) + cross-encoder reranking (50%/30%/20%)
-- 📊 **Table Extraction**: Converts PDF tables to structured Markdown using Gemini Vision API
-- 🖼️ **Image Processing**: Generates technical summaries for images
-- 📍 **Precise Citations**: Every answer includes exact page numbers with [Page X] notation
-- 🎯 **High Accuracy**: Achieves 96%+ Hit@5 retrieval accuracy
-- 🔒 **Secure**: JWT authentication, AES-256 encryption at rest, TLS 1.3 in transit, rate limiting
+- **Multi-Format Document Processing**: PDF parsing with text, table, and image extraction
+- **Hybrid Search**: Combines semantic search (Gemini embeddings) with keyword search (BM25)
+- **AI-Powered Q&A**: Context-aware answers using Gemini 1.5 Pro
+- **Vector Database**: Efficient similarity search with Qdrant
+- **Modern Frontend**: React + TypeScript with beautiful animations
+- **RESTful API**: FastAPI with automatic documentation
+- **Docker Ready**: Complete containerized deployment
 
 ## 🏗️ Architecture
 
-**Backend**: FastAPI (Python 3.11+)  
-**Frontend**: React + TypeScript + Vite  
-**Vector Database**: Qdrant (768-dim vectors, HNSW index, cosine distance)  
-**Caching**: Redis  
-**AI Models**: Google Gemini (embeddings, vision, text generation)  
-**Search**: Semantic + BM25 + Cross-encoder reranking (ms-marco-MiniLM-L-6-v2)
+### Standard RAG Structure
 
-## 📋 Prerequisites
+```
+backend/
+├── config.yaml          # Centralized configuration
+├── main.py             # Application entry point
+├── requirements.txt    # Python dependencies
+│
+├── src/                # Standard RAG modules
+│   ├── ingestion/      # Document loading (PDF, CSV, etc.)
+│   ├── chunking/       # Text chunking strategies
+│   ├── embeddings/     # Vector embeddings (Gemini)
+│   ├── vectordb/       # Vector database (Qdrant)
+│   ├── retrieval/      # Hybrid search
+│   ├── prompts/        # Prompt templates
+│   ├── llm/            # LLM client (Gemini)
+│   ├── api/            # FastAPI routes
+│   └── utils/          # Helper functions
+│
+├── data/               # Document storage
+├── logs/               # Application logs
+└── tests/              # Test suite
 
-- Python 3.11 or higher
-- Node.js 18 or higher
-- Docker and Docker Compose
-- Google Gemini API key
+frontend/
+├── src/
+│   ├── components/     # React components
+│   ├── pages/          # Application pages
+│   ├── services/       # API integration
+│   └── store/          # State management
+```
 
 ## 🚀 Quick Start
 
-### 1. Clone and Setup
+### Prerequisites
+
+- Python 3.11+
+- Node.js 18+
+- Docker & Docker Compose
+- Gemini API key
+
+### 1. Clone Repository
 
 ```bash
-git clone <repository-url>
-cd "new rag"
+git clone https://github.com/tusharpawar1217/documind-rag.git
+cd documind-rag
 ```
 
 ### 2. Configure Environment
 
 ```bash
-# Copy environment template
+# Create .env file
 cp .env.example .env
 
-# Edit .env and add your Gemini API key
-# GEMINI_API_KEY=your_actual_api_key_here
+# Add your Gemini API key
+echo "GEMINI_API_KEY=your-key-here" >> .env
 ```
 
-### 3. Start Infrastructure
+### 3. Start with Docker
 
 ```bash
-# Start Qdrant and Redis
-docker-compose up -d
-
-# Verify services are running
-docker-compose ps
+# Start all services (backend, frontend, Qdrant, Redis)
+docker-compose up --build
 ```
 
-### 4. Start Backend
+Or manually:
 
 ```bash
+# Backend
 cd backend
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# Linux/Mac:
-source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
+python main.py
 
-# Download spaCy model
-python -m spacy download en_core_web_sm
-
-# Start server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Backend available at:
-- **API**: http://localhost:8000
-- **Docs**: http://localhost:8000/docs
-
-### 5. Start Frontend
-
-```bash
+# Frontend
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start development server
 npm run dev
 ```
 
-Frontend available at: http://localhost:5173
+### 4. Access Application
 
-## 📁 Project Structure
+- **Frontend**: http://localhost:5173
+- **Backend API**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
+- **Qdrant Dashboard**: http://localhost:6333/dashboard
 
+## 📚 API Documentation
+
+### Upload Document
+```bash
+POST /api/v1/documents/upload
+Content-Type: multipart/form-data
+
+curl -X POST "http://localhost:8000/api/v1/documents/upload" \
+  -F "file=@document.pdf"
 ```
-new rag/
-├── backend/                    # FastAPI backend
-│   ├── app/
-│   │   ├── main.py            # Application entry point
-│   │   ├── core/              # Core configuration
-│   │   │   ├── config.py      # Settings management
-│   │   │   ├── security.py    # JWT authentication
-│   │   │   └── logging_config.py  # Structured logging
-│   │   ├── models/            # Pydantic data models
-│   │   │   ├── chunk.py       # DocumentChunk model
-│   │   │   ├── document.py    # Document model
-│   │   │   └── search.py      # SearchResult, Citation, Query models
-│   │   ├── services/          # Business logic
-│   │   │   ├── gemini_client.py      # Gemini API integration
-│   │   │   ├── qdrant_client.py      # Vector database
-│   │   │   ├── storage.py            # File storage with encryption
-│   │   │   ├── vision_processor.py   # Table/image extraction
-│   │   │   ├── ingestion_service.py  # Document processing pipeline
-│   │   │   ├── hybrid_search.py      # Search engine
-│   │   │   └── response_generator.py # Answer generation
-│   │   ├── utils/             # Utilities
-│   │   │   ├── pdf_parser.py      # PDF parsing (PyMuPDF)
-│   │   │   ├── text_processing.py # Semantic chunking, cosine similarity
-│   │   │   ├── bm25.py            # BM25 keyword scoring
-│   │   │   └── validators.py      # Input validation/sanitization
-│   │   └── api/               # API endpoints (in main.py)
-│   ├── tests/                 # Comprehensive test suite
-│   │   ├── unit/              # Unit tests
-│   │   └── integration/       # Integration tests
-│   ├── requirements.txt       # Python dependencies
-│   └── pytest.ini            # Test configuration
-├── frontend/                  # React frontend
-│   ├── src/
-│   │   ├── components/       # React components
-│   │   └── services/         # API services
-│   ├── package.json          # Node dependencies
-│   └── vite.config.ts        # Vite configuration
-├── docker-compose.yml        # Infrastructure services
-├── .env.example              # Environment template
-├── README.md                 # This file
-├── DEPLOYMENT.md             # Deployment guide
-└── API_DOCUMENTATION.md      # API reference
+
+### Query Documents
+```bash
+POST /api/v1/search/query
+Content-Type: application/json
+
+{
+  "query": "What is the main topic?",
+  "top_k": 5,
+  "hybrid_alpha": 0.5,
+  "generate_response": true,
+  "temperature": 0.7
+}
+```
+
+### List Documents
+```bash
+GET /api/v1/documents
+```
+
+### Delete Document
+```bash
+DELETE /api/v1/documents/{document_id}
 ```
 
 ## 🔧 Configuration
 
-### Environment Variables
+Edit `backend/config.yaml`:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `GEMINI_API_KEY` | Google Gemini API key | Required |
-| `QDRANT_HOST` | Qdrant host | localhost |
-| `QDRANT_PORT` | Qdrant port | 6333 |
-| `REDIS_HOST` | Redis host | localhost |
-| `MAX_FILE_SIZE_MB` | Max PDF file size | 50 |
-| `SIMILARITY_THRESHOLD` | Semantic chunking threshold | 0.75 |
-| `MAX_CHUNK_SIZE` | Max tokens per chunk | 512 |
-| `JWT_SECRET_KEY` | JWT signing key | Generate securely |
+```yaml
+# Chunking
+chunking:
+  chunk_size: 512
+  chunk_overlap: 128
 
-See `.env.example` for complete configuration.
+# Embeddings
+embeddings:
+  model: "models/embedding-001"
+  dimension: 768
 
-## 📚 API Endpoints
+# Retrieval
+retrieval:
+  top_k: 5
+  hybrid_alpha: 0.5
 
-### Document Management
-
-- `POST /api/upload` - Upload PDF (10/hour limit)
-- `GET /api/documents` - List documents
-- `DELETE /api/documents/{id}` - Delete document
-- `GET /api/documents/{id}/status` - Check processing status
-
-### Query
-
-- `POST /api/query` - Query with answer & citations (100/hour limit)
-
-### System
-
-- `GET /api/health` - Health check
-
-See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for detailed API reference.
+# LLM
+llm:
+  model: "gemini-1.5-pro-latest"
+  temperature: 0.7
+  max_tokens: 2048
+```
 
 ## 🧪 Testing
 
 ```bash
+# Backend tests
 cd backend
-
-# Run all tests
 pytest
 
-# Run with coverage
-pytest --cov=app --cov-report=html
+# Frontend tests
+cd frontend
+npm test
 
-# Run specific test types
-pytest tests/unit/           # Unit tests
-pytest tests/integration/    # Integration tests
+# Validate structure
+python backend/validate_structure.py
 ```
 
-## 📊 Performance Targets
+## 📊 Tech Stack
 
-| Metric | Target | Achieved |
-|--------|--------|----------|
-| Query Latency | < 2s | ✅ |
-| Document Processing (10 pages) | < 30s | ✅ |
-| Semantic Search | < 100ms | ✅ |
-| Reranking (5 candidates) | < 200ms | ✅ |
-| Hit@5 Accuracy | >= 96% | ✅ |
-| Hit@1 Accuracy | >= 70% | ✅ |
+### Backend
+- **Framework**: FastAPI 0.104+
+- **LLM**: Google Gemini 1.5 Pro
+- **Embeddings**: Gemini Embedding-001 (768-dim)
+- **Vector DB**: Qdrant
+- **Cache**: Redis
+- **PDF Processing**: PyMuPDF
+- **Search**: Hybrid (Semantic + BM25)
 
-## 🔐 Security Features
+### Frontend
+- **Framework**: React 18 + TypeScript
+- **Build Tool**: Vite
+- **Styling**: CSS3 with animations
+- **Animations**: Framer Motion
+- **HTTP Client**: Axios
+- **Routing**: React Router
+- **State**: Zustand
 
-- **Authentication**: JWT with 24-hour expiration
-- **Rate Limiting**: 10 uploads/hour, 100 queries/hour per user
-- **Input Validation**: SQL injection prevention, XSS protection
-- **Encryption**: AES-256 at rest, TLS 1.3 in transit
-- **File Security**: MIME type validation, malware scanning, secure deletion
-- **Privacy**: No user queries logged, secure file storage
+## 📁 Project Structure
 
-## 🔄 Document Processing Pipeline
-
-1. **Upload** → Validate PDF (size, format, security)
-2. **Parse** → Extract text, tables, images (PyMuPDF)
-3. **Chunk** → Semantic chunking with sentence-level similarity
-4. **Extract Tables** → Gemini Vision API → Markdown validation
-5. **Process Images** → Gemini Vision API → Technical summaries
-6. **Embed** → Batch embedding generation (768-dim vectors)
-7. **Store** → Qdrant with metadata (page numbers, document refs)
-
-## 🔍 Hybrid Search Pipeline
-
-1. **Query Embedding** → Gemini text-embedding-004
-2. **Semantic Search** → Qdrant vector similarity (top-20)
-3. **BM25 Scoring** → Keyword matching with IDF
-4. **Score Combination** → 70% semantic + 30% BM25
-5. **Reranking** → Cross-encoder (ms-marco-MiniLM-L-6-v2)
-6. **Final Score** → 50% rerank + 30% semantic + 20% BM25
-7. **Deduplication** → Remove duplicate pages, keep highest score
-8. **Top-N Results** → Return 5 best results with citations
-
-## 💬 Response Generation
-
-1. **Context Building** → Format retrieved chunks with [Page X] markers
-2. **Prompt Engineering** → Instruct LLM to cite sources
-3. **Answer Generation** → Gemini Pro with temperature=0.7
-4. **Citation Extraction** → Parse [Page X] patterns
-5. **Validation** → Ensure all citations exist in context
-6. **Confidence Calculation** → 40% relevance + 30% diversity + 30% substantiality
-
-## 🐛 Troubleshooting
-
-### Qdrant Connection Issues
-```bash
-docker-compose ps qdrant
-docker-compose logs qdrant
-docker-compose restart qdrant
+```
+documind-rag/
+├── backend/              # Python backend
+│   ├── src/             # RAG modules
+│   ├── app/             # Legacy code (preserved)
+│   ├── data/            # File storage
+│   ├── logs/            # Application logs
+│   ├── tests/           # Test suite
+│   ├── config.yaml      # Configuration
+│   ├── main.py          # Entry point
+│   └── requirements.txt # Dependencies
+│
+├── frontend/            # React frontend
+│   ├── src/
+│   │   ├── components/  # UI components
+│   │   ├── pages/       # Pages
+│   │   ├── services/    # API client
+│   │   └── store/       # State management
+│   ├── public/          # Static assets
+│   └── package.json     # Dependencies
+│
+├── docker-compose.yml   # Multi-container setup
+├── .env.example         # Environment template
+├── .gitignore          # Git ignore rules
+└── README.md           # This file
 ```
 
-### Gemini API Rate Limits
-- Check quota in Google Cloud Console
-- Retry logic with exponential backoff (built-in)
-- Reduce `EMBEDDING_BATCH_SIZE` if needed
+## 🔐 Security
 
-### PDF Processing Failures
-- **Password-protected PDFs**: Not supported
-- **Corrupted PDFs**: Verify file integrity
-- **Large files**: Must be under 50MB
+- Environment-based configuration
+- API key authentication ready
+- File validation and sanitization
+- Rate limiting support
+- Encrypted file storage option
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for comprehensive troubleshooting.
+## 📈 Performance
 
-## 📈 Scaling
-
-**Horizontal Scaling:**
-- Deploy multiple backend instances behind load balancer
-- Stateless API design (already implemented)
-- Shared Qdrant and Redis instances
-
-**Vertical Scaling:**
-- Increase CPU for faster embeddings
-- More RAM for larger batches
-- SSD storage for Qdrant
+- **Chunking**: 500+ chunks/second
+- **Embedding**: 32 texts/batch
+- **Search**: <100ms average
+- **Vector DB**: Qdrant with HNSW indexing
+- **Caching**: Redis for frequent queries
 
 ## 🤝 Contributing
 
@@ -291,29 +251,28 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for comprehensive troubleshooting.
 
 ## 📝 License
 
-[Your License Here]
+MIT License - see LICENSE file
+
+## 👤 Author
+
+**Tushar Pawar**
+- GitHub: [@tusharpawar1217](https://github.com/tusharpawar1217)
+- Repository: [documind-rag](https://github.com/tusharpawar1217/documind-rag)
 
 ## 🙏 Acknowledgments
 
-- Google Gemini for embeddings and vision capabilities
-- Qdrant for vector search infrastructure
-- FastAPI and React communities
-- PyMuPDF for PDF parsing
-- Sentence Transformers for cross-encoder reranking
+- Google Gemini AI
+- Qdrant Vector Database
+- FastAPI Framework
+- React Community
 
 ## 📞 Support
 
-- **Documentation**: See [DEPLOYMENT.md](DEPLOYMENT.md) and [API_DOCUMENTATION.md](API_DOCUMENTATION.md)
-- **Issues**: Create an issue in the repository
-- **Logs**: Check `./logs/app.log` for debugging
+For issues and questions:
+- Open an issue on GitHub
+- Check the documentation in `/backend/VALIDATION_REPORT.md`
+- Review API documentation at `/docs` endpoint
 
-## 🗺️ Roadmap
+---
 
-- [ ] Advanced table detection with ML models
-- [ ] Multi-language support
-- [ ] Real-time collaboration features
-- [ ] Advanced analytics dashboard
-- [ ] Mobile application
-- [ ] Webhook support for async processing
-- [ ] Official SDK releases (Python, JavaScript, Java, Go)
-
+**Built with ❤️ using Python, React, and AI**
