@@ -1,0 +1,90 @@
+# DocuMind RAG Configuration
+
+# Application Settings
+app:
+  name: "DocuMind RAG"
+  version: "1.0.0"
+  environment: "development"
+  host: "0.0.0.0"
+  port: 8000
+  log_level: "INFO"
+
+# Document Processing
+ingestion:
+  max_file_size_mb: 50
+  allowed_formats: ["pdf"]
+  extract_tables: true
+  extract_images: true
+  process_ocr: false
+
+# Text Chunking
+chunking:
+  strategy: "semantic"  # semantic, fixed, recursive
+  chunk_size: 512
+  chunk_overlap: 128
+  min_chunk_size: 100
+  max_chunk_size: 1000
+  similarity_threshold: 0.7
+
+# Embeddings
+embeddings:
+  model: "models/embedding-001"  # Gemini embedding model
+  dimension: 768
+  batch_size: 32
+  normalize: true
+
+# Vector Database
+vectordb:
+  provider: "qdrant"  # qdrant, pinecone, faiss, chroma
+  host: "qdrant"
+  port: 6333
+  collection_name: "documind_vectors"
+  distance_metric: "cosine"
+  recreate_collection: false
+
+# Retrieval
+retrieval:
+  top_k: 5
+  search_type: "hybrid"  # semantic, keyword, hybrid
+  hybrid_alpha: 0.5  # 0=keyword, 1=semantic
+  rerank: true
+  rerank_model: "cross-encoder"
+  min_score: 0.5
+
+# LLM Configuration
+llm:
+  provider: "gemini"  # gemini, openai, claude
+  model: "gemini-1.5-pro-latest"
+  temperature: 0.7
+  max_tokens: 2048
+  top_p: 0.95
+  top_k: 40
+  timeout: 30
+
+# Prompts
+prompts:
+  system_role: "You are a helpful AI assistant that answers questions based on the provided context."
+  max_context_length: 4000
+  include_sources: true
+
+# Cache & Performance
+cache:
+  enabled: true
+  provider: "redis"
+  host: "redis"
+  port: 6379
+  ttl: 3600
+
+# Security
+security:
+  enable_auth: false
+  api_key_header: "X-API-Key"
+  rate_limit: 100  # requests per minute
+  encrypt_files: true
+
+# Monitoring
+monitoring:
+  enable_metrics: true
+  log_queries: true
+  log_responses: false
+  track_usage: true

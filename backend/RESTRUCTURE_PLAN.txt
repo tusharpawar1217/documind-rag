@@ -1,0 +1,77 @@
+RAG BACKEND RESTRUCTURING PLAN
+================================
+
+CURRENT STRUCTURE:
+backend/
+├── app/
+│   ├── api/ (routes)
+│   ├── core/ (config, security, logging)
+│   ├── models/ (pydantic models)
+│   ├── services/ (business logic)
+│   └── utils/ (helpers)
+
+TARGET STRUCTURE:
+backend/
+├── config.yaml ✅
+├── main.py ✅
+├── requirements.txt (keep)
+├── src/
+│   ├── ingestion/ (from app/utils/pdf_parser.py + app/services/storage.py)
+│   ├── chunking/ (from app/utils/text_processing.py)
+│   ├── embeddings/ (from app/services/gemini_client.py - embedding part)
+│   ├── vectordb/ (from app/services/qdrant_client.py)
+│   ├── retrieval/ (from app/services/hybrid_search.py)
+│   ├── prompts/ (new - extract from app/services/response_generator.py)
+│   ├── llm/ (from app/services/gemini_client.py - LLM part)
+│   ├── api/ (from app/api/ + app/main.py)
+│   └── utils/ (from app/utils/ + app/core/)
+
+MIGRATION MAPPING:
+==================
+
+1. ingestion/loader.py:
+   - PDF parsing from app/utils/pdf_parser.py
+   - File storage from app/services/storage.py
+   - Vision processing from app/services/vision_processor.py
+
+2. chunking/chunker.py:
+   - SemanticChunker from app/utils/text_processing.py
+   - Token counting utilities
+
+3. embeddings/embedder.py:
+   - embed_text() from app/services/gemini_client.py
+   - embed_batch() from app/services/gemini_client.py
+
+4. vectordb/vector_store.py:
+   - QdrantService from app/services/qdrant_client.py
+   - All vector operations
+
+5. retrieval/retriever.py:
+   - HybridSearch from app/services/hybrid_search.py
+   - BM25 from app/utils/bm25.py
+
+6. prompts/prompt_templates.py:
+   - Extract prompt templates from app/services/response_generator.py
+   - System prompts, user prompts
+
+7. llm/llm_client.py:
+   - generate_text() from app/services/gemini_client.py
+   - Chat functionality
+
+8. api/routes.py:
+   - All routes from app/api/
+   - FastAPI app initialization from app/main.py
+
+9. utils/helpers.py:
+   - Config loading (from app/core/config.py)
+   - Logging setup (from app/core/logging_config.py)
+   - Validators (from app/utils/validators.py)
+   - Security (from app/core/security.py)
+
+NOTES:
+======
+- Keep app/ folder temporarily for reference
+- Create symbolic structure first
+- Test each module independently
+- Update imports progressively
+- Keep backward compatibility during transition
