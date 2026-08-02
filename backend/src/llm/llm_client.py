@@ -6,7 +6,11 @@ This module manages interactions with Large Language Models for response generat
 
 import os
 import yaml
+from dotenv import load_dotenv
 import google.generativeai as genai
+
+# Load environment variables from .env file
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '..', '..', '.env'))
 
 # Load config
 with open('config.yaml', 'r') as f:
