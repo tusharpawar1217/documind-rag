@@ -7,7 +7,11 @@ This module handles converting text into dense vector representations for semant
 from typing import List
 import os
 import yaml
+from dotenv import load_dotenv
 import google.generativeai as genai
+
+# Load environment variables from .env file
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '..', '..', '.env'))
 
 # Load config
 with open('config.yaml', 'r') as f:

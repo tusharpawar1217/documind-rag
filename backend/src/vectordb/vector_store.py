@@ -132,4 +132,10 @@ class QdrantVectorStore(VectorStore):
 
 
 # Global vector store instance
-vector_store = QdrantVectorStore()
+try:
+    vector_store = QdrantVectorStore()
+    print("✓ Using Qdrant Vector Store")
+except Exception as e:
+    print(f"⚠ Qdrant not available, using in-memory store: {e}")
+    from .in_memory_store import in_memory_store
+    vector_store = in_memory_store
