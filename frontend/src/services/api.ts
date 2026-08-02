@@ -96,7 +96,9 @@ export const queryDocuments = async (
   query: string,
   topK: number = 5,
   hybridAlpha: number = 0.5,
-  temperature: number = 0.7
+  temperature: number = 0.7,
+  sessionId: string = 'default',
+  useChatHistory: boolean = true
 ) => {
   const response = await api.post('/api/v1/search/query', {
     query,
@@ -104,6 +106,24 @@ export const queryDocuments = async (
     hybrid_alpha: hybridAlpha,
     generate_response: true,
     temperature,
+    session_id: sessionId,
+    use_chat_history: useChatHistory
+  })
+  return response.data
+}
+
+// Get chat history
+export const getChatHistory = async (sessionId: string = 'default', limit: number = 20) => {
+  const response = await api.get('/api/v1/chat/history', {
+    params: { session_id: sessionId, limit }
+  })
+  return response.data
+}
+
+// Clear chat history
+export const clearChatHistory = async (sessionId: string = 'default') => {
+  const response = await api.delete('/api/v1/chat/history', {
+    params: { session_id: sessionId }
   })
   return response.data
 }
