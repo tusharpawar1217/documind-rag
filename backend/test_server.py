@@ -452,52 +452,90 @@ async def query_documents(request: QueryRequest):
                     genai.configure(api_key=api_key)
                     
                     # Create prompt for LLM
-                    system_prompt = """You are an AI assistant that answers questions based on provided document context.
+                    system_prompt = """You are a helpful AI assistant that provides clear, accurate answers based on document context.
 
-Instructions:
-1. Answer the user's question using ONLY the information from the provided context
-2. Be specific and accurate
-3. Cite page numbers when referencing information
-4. If the context doesn't contain enough information, say so
-5. Keep answers concise but complete
-6. Use natural, conversational language"""
+INSTRUCTIONS:
+1. Read the provided context carefully
+2. Answer the user's question using ONLY information from the context
+3. Write in a natural, conversational tone
+4. Structure your answer clearly:
+   - Start with a direct answer
+   - Provide supporting details
+   - Use bullet points or numbered lists when listing multiple items
+   - Keep paragraphs short and readable
+5. If the context mentions page numbers, reference them naturally in your answer
+6. If the context doesn't fully answer the question, acknowledge what you can and cannot answer
+7. Be concise but complete - aim for 2-4 sentences for simple questions, more for complex ones
+8. Use proper formatting: bold for emphasis, line breaks for readability
+
+NEVER:
+- Make up information not in the context
+- Say "based on the context" (it's implied)
+- Copy-paste large chunks verbatim
+- Give vague or generic answers
+
+ALWAYS:
+- Be specific and precise
+- Use examples from the context when relevant
+- Write as if explaining to a colleague"""
                     
-                    user_prompt = f"""Context from documents:
+                    # Add query-type specific instructions
+                    query_type = query_enhancement['query_type']
+                    formatting_hint = ""
+                    
+                    if query_type == "explanation":
+                        formatting_hint = "\n\nFormat: Start with a clear definition, then explain the details."
+                    elif query_type == "how-to":
+                        formatting_hint = "\n\nFormat: Provide step-by-step instructions or describe the process clearly."
+                    elif query_type == "enumeration":
+                        formatting_hint = "\n\nFormat: Use a numbered or bulleted list."
+                    elif query_type == "reasoning":
+                        formatting_hint = "\n\nFormat: Explain the reasons or causes clearly."
+                    elif query_type == "factual":
+                        formatting_hint = "\n\nFormat: Provide the specific fact or data directly."
+                    
+                    user_prompt = f"""Here is the relevant information from the documents:
+
 {context_for_llm}
 
-User question: {request.query}
+Question: {request.query}
 
-Please provide a clear, accurate answer based on the context above. Include page references when possible."""
+Please provide a clear, well-structured answer to the question above using the information provided. Format your response for easy reading.{formatting_hint}"""
                     
                     # Generate response
                     model = genai.GenerativeModel(
                         model_name='gemini-1.5-flash',
                         generation_config={
-                            "temperature": 0.7,
+                            "temperature": 0.4,  # Lower for more factual, focused answers
                             "top_p": 0.95,
                             "top_k": 40,
-                            "max_output_tokens": 1024,
+                            "max_output_tokens": 2048,  # Allow longer, detailed answers
                         },
                         system_instruction=system_prompt
                     )
                     
                     llm_response = model.generate_content(user_prompt)
-                    llm_answer = llm_response.text
+                    llm_answer = llm_response.text.strip()
                     
-                    # Format final response
+                    # Format final response with clear structure
                     response_text = f"{llm_answer}\n\n"
+                    
+                    # Add visual separator
+                    response_text += "\n" + "─" * 60 + "\n"
+                    response_text += "📚 **SOURCES**\n"
                     response_text += "─" * 60 + "\n\n"
                     
-                    # Add source references
+                    # Add source references with better formatting
                     if len(page_refs) == 1:
                         doc, page = list(page_refs)[0]
-                        response_text += f"📄 **Source**: {doc}, Page {page}\n"
+                        response_text += f"📄 **Document**: {doc}\n"
+                        response_text += f"📑 **Page**: {page}\n"
                     else:
-                        response_text += f"📄 **Sources**: Found across {len(page_refs)} pages:\n"
-                        for doc, page in sorted(page_refs, key=lambda x: x[1]):
-                            response_text += f"   • {doc}, Page {page}\n"
+                        response_text += f"📚 **Found across {len(page_refs)} pages**:\n\n"
+                        for idx, (doc, page) in enumerate(sorted(page_refs, key=lambda x: x[1]), 1):
+                            response_text += f"   {idx}. {doc} - Page {page}\n"
                     
-                    response_text += f"\n💡 **Tip**: Open your PDF and navigate to these pages for complete details.\n"
+                    response_text += f"\n💡 **Tip**: Open your PDF to verify these details on the referenced pages."
                     
                 else:
                     # Fallback if no API key
