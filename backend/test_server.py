@@ -317,6 +317,41 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
 
+def _generate_fallback_response(query, context_parts, page_refs, query_enhancement):
+    """Generate response without LLM (fallback)."""
+    query_type = query_enhancement['query_type']
+    
+    if query_type == "explanation":
+        response = f"**Understanding: {query}**\n\n"
+        response += "Based on the document analysis:\n\n"
+    elif query_type == "how-to":
+        response += f"**How to: {query}**\n\n"
+        response += "Here are the steps/process found:\n\n"
+    elif query_type == "enumeration":
+        response = f"**List: {query}**\n\n"
+        response += "Found the following items:\n\n"
+    else:
+        response = f"**Answer: {query}**\n\n"
+    
+    # Add context
+    for idx, part in enumerate(context_parts, 1):
+        response += f"{part}\n\n"
+    
+    # Add page summary
+    response += "\n" + "─" * 60 + "\n\n"
+    if len(page_refs) == 1:
+        doc, page = list(page_refs)[0]
+        response += f"📄 **Source**: {doc}, Page {page}\n"
+    else:
+        response += f"📄 **Sources**: Found across {len(page_refs)} pages:\n"
+        for doc, page in sorted(page_refs, key=lambda x: x[1]):
+            response += f"   • {doc}, Page {page}\n"
+    
+    response += f"\n💡 **Tip**: Open your PDF for complete details.\n"
+    
+    return response
+
+
 @app.post("/api/v1/search/query", response_model=QueryResponse)
 async def query_documents(request: QueryRequest):
     """Search documents with chat history, prompt enhancement, and page-level accuracy."""
@@ -399,46 +434,121 @@ async def query_documents(request: QueryRequest):
                 )
                 page_refs.add((doc_name, page_num))
             
-            # Check if this is a follow-up question
-            is_followup = len(context_history) > 0 and query_enhancement['context_hint']
+            # Build context for LLM
+            context_for_llm = "\n\n".join([result['content'] for result in top_results[:3]])
             
-            # Generate intelligent response based on query type
-            query_type = query_enhancement['query_type']
-            
-            if query_type == "explanation":
-                response_text = f"**Understanding: {request.query}**\n\n"
-                response_text += "Based on the document analysis:\n\n"
-            elif query_type == "how-to":
-                response_text = f"**How to: {request.query}**\n\n"
-                response_text += "Here are the steps/process found:\n\n"
-            elif query_type == "enumeration":
-                response_text = f"**List: {request.query}**\n\n"
-                response_text += "Found the following items:\n\n"
-            elif is_followup:
-                response_text = f"**Follow-up: {request.query}**\n\n"
-                response_text += "Continuing from previous context:\n\n"
-            else:
-                response_text = f"**Answer: {request.query}**\n\n"
-            
-            # Add sources
-            for idx, part in enumerate(context_parts, 1):
-                response_text += f"{part}\n\n"
-            
-            # Add page summary
-            response_text += "\n" + "─" * 60 + "\n\n"
-            if len(page_refs) == 1:
-                doc, page = list(page_refs)[0]
-                response_text += f"📄 **Source**: {doc}, Page {page}\n"
-            else:
-                response_text += f"📄 **Sources**: Found across {len(page_refs)} pages:\n"
-                for doc, page in sorted(page_refs, key=lambda x: x[1]):
-                    response_text += f"   • {doc}, Page {page}\n"
-            
-            response_text += f"\n💡 **Tip**: Open your PDF and navigate to these pages for complete details.\n"
-            
-            # Add search insights
-            if query_enhancement['key_terms']:
-                response_text += f"\n🔍 **Search terms used**: {', '.join(query_enhancement['key_terms'][:5])}"
+            # Use LLM to generate answer
+            try:
+                import google.generativeai as genai
+                import os
+                from dotenv import load_dotenv
+                
+                # Load environment
+                load_dotenv()
+                
+                # Configure Gemini
+                api_key = os.getenv('GEMINI_API_KEY')
+                if api_key:
+                    genai.configure(api_key=api_key)
+                    
+                    # Create prompt for LLM
+                    system_prompt = """You are a helpful AI assistant that provides clear, accurate answers based on document context.
+
+INSTRUCTIONS:
+1. Read the provided context carefully
+2. Answer the user's question using ONLY information from the context
+3. Write in a natural, conversational tone
+4. Structure your answer clearly:
+   - Start with a direct answer
+   - Provide supporting details
+   - Use bullet points or numbered lists when listing multiple items
+   - Keep paragraphs short and readable
+5. If the context mentions page numbers, reference them naturally in your answer
+6. If the context doesn't fully answer the question, acknowledge what you can and cannot answer
+7. Be concise but complete - aim for 2-4 sentences for simple questions, more for complex ones
+8. Use proper formatting: bold for emphasis, line breaks for readability
+
+NEVER:
+- Make up information not in the context
+- Say "based on the context" (it's implied)
+- Copy-paste large chunks verbatim
+- Give vague or generic answers
+
+ALWAYS:
+- Be specific and precise
+- Use examples from the context when relevant
+- Write as if explaining to a colleague"""
+                    
+                    # Add query-type specific instructions
+                    query_type = query_enhancement['query_type']
+                    formatting_hint = ""
+                    
+                    if query_type == "explanation":
+                        formatting_hint = "\n\nFormat: Start with a clear definition, then explain the details."
+                    elif query_type == "how-to":
+                        formatting_hint = "\n\nFormat: Provide step-by-step instructions or describe the process clearly."
+                    elif query_type == "enumeration":
+                        formatting_hint = "\n\nFormat: Use a numbered or bulleted list."
+                    elif query_type == "reasoning":
+                        formatting_hint = "\n\nFormat: Explain the reasons or causes clearly."
+                    elif query_type == "factual":
+                        formatting_hint = "\n\nFormat: Provide the specific fact or data directly."
+                    
+                    user_prompt = f"""Here is the relevant information from the documents:
+
+{context_for_llm}
+
+Question: {request.query}
+
+Please provide a clear, well-structured answer to the question above using the information provided. Format your response for easy reading.{formatting_hint}"""
+                    
+                    # Generate response
+                    model = genai.GenerativeModel(
+                        model_name='gemini-1.5-flash',
+                        generation_config={
+                            "temperature": 0.4,  # Lower for more factual, focused answers
+                            "top_p": 0.95,
+                            "top_k": 40,
+                            "max_output_tokens": 2048,  # Allow longer, detailed answers
+                        },
+                        system_instruction=system_prompt
+                    )
+                    
+                    llm_response = model.generate_content(user_prompt)
+                    llm_answer = llm_response.text.strip()
+                    
+                    # Format final response with clear structure
+                    response_text = f"{llm_answer}\n\n"
+                    
+                    # Add visual separator
+                    response_text += "\n" + "─" * 60 + "\n"
+                    response_text += "📚 **SOURCES**\n"
+                    response_text += "─" * 60 + "\n\n"
+                    
+                    # Add source references with better formatting
+                    if len(page_refs) == 1:
+                        doc, page = list(page_refs)[0]
+                        response_text += f"📄 **Document**: {doc}\n"
+                        response_text += f"📑 **Page**: {page}\n"
+                    else:
+                        response_text += f"📚 **Found across {len(page_refs)} pages**:\n\n"
+                        for idx, (doc, page) in enumerate(sorted(page_refs, key=lambda x: x[1]), 1):
+                            response_text += f"   {idx}. {doc} - Page {page}\n"
+                    
+                    response_text += f"\n💡 **Tip**: Open your PDF to verify these details on the referenced pages."
+                    
+                else:
+                    # Fallback if no API key
+                    response_text = _generate_fallback_response(
+                        request.query, context_parts, page_refs, query_enhancement
+                    )
+                    
+            except Exception as e:
+                print(f"LLM generation error: {e}")
+                # Fallback to non-LLM response
+                response_text = _generate_fallback_response(
+                    request.query, context_parts, page_refs, query_enhancement
+                )
             
         else:
             response_text = f"**No results found for**: {request.query}\n\n"
