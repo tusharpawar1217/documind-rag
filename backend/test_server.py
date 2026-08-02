@@ -317,6 +317,41 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
 
+def _generate_fallback_response(query, context_parts, page_refs, query_enhancement):
+    """Generate response without LLM (fallback)."""
+    query_type = query_enhancement['query_type']
+    
+    if query_type == "explanation":
+        response = f"**Understanding: {query}**\n\n"
+        response += "Based on the document analysis:\n\n"
+    elif query_type == "how-to":
+        response += f"**How to: {query}**\n\n"
+        response += "Here are the steps/process found:\n\n"
+    elif query_type == "enumeration":
+        response = f"**List: {query}**\n\n"
+        response += "Found the following items:\n\n"
+    else:
+        response = f"**Answer: {query}**\n\n"
+    
+    # Add context
+    for idx, part in enumerate(context_parts, 1):
+        response += f"{part}\n\n"
+    
+    # Add page summary
+    response += "\n" + "─" * 60 + "\n\n"
+    if len(page_refs) == 1:
+        doc, page = list(page_refs)[0]
+        response += f"📄 **Source**: {doc}, Page {page}\n"
+    else:
+        response += f"📄 **Sources**: Found across {len(page_refs)} pages:\n"
+        for doc, page in sorted(page_refs, key=lambda x: x[1]):
+            response += f"   • {doc}, Page {page}\n"
+    
+    response += f"\n💡 **Tip**: Open your PDF for complete details.\n"
+    
+    return response
+
+
 @app.post("/api/v1/search/query", response_model=QueryResponse)
 async def query_documents(request: QueryRequest):
     """Search documents with chat history, prompt enhancement, and page-level accuracy."""
@@ -399,46 +434,83 @@ async def query_documents(request: QueryRequest):
                 )
                 page_refs.add((doc_name, page_num))
             
-            # Check if this is a follow-up question
-            is_followup = len(context_history) > 0 and query_enhancement['context_hint']
+            # Build context for LLM
+            context_for_llm = "\n\n".join([result['content'] for result in top_results[:3]])
             
-            # Generate intelligent response based on query type
-            query_type = query_enhancement['query_type']
-            
-            if query_type == "explanation":
-                response_text = f"**Understanding: {request.query}**\n\n"
-                response_text += "Based on the document analysis:\n\n"
-            elif query_type == "how-to":
-                response_text = f"**How to: {request.query}**\n\n"
-                response_text += "Here are the steps/process found:\n\n"
-            elif query_type == "enumeration":
-                response_text = f"**List: {request.query}**\n\n"
-                response_text += "Found the following items:\n\n"
-            elif is_followup:
-                response_text = f"**Follow-up: {request.query}**\n\n"
-                response_text += "Continuing from previous context:\n\n"
-            else:
-                response_text = f"**Answer: {request.query}**\n\n"
-            
-            # Add sources
-            for idx, part in enumerate(context_parts, 1):
-                response_text += f"{part}\n\n"
-            
-            # Add page summary
-            response_text += "\n" + "─" * 60 + "\n\n"
-            if len(page_refs) == 1:
-                doc, page = list(page_refs)[0]
-                response_text += f"📄 **Source**: {doc}, Page {page}\n"
-            else:
-                response_text += f"📄 **Sources**: Found across {len(page_refs)} pages:\n"
-                for doc, page in sorted(page_refs, key=lambda x: x[1]):
-                    response_text += f"   • {doc}, Page {page}\n"
-            
-            response_text += f"\n💡 **Tip**: Open your PDF and navigate to these pages for complete details.\n"
-            
-            # Add search insights
-            if query_enhancement['key_terms']:
-                response_text += f"\n🔍 **Search terms used**: {', '.join(query_enhancement['key_terms'][:5])}"
+            # Use LLM to generate answer
+            try:
+                import google.generativeai as genai
+                import os
+                from dotenv import load_dotenv
+                
+                # Load environment
+                load_dotenv()
+                
+                # Configure Gemini
+                api_key = os.getenv('GEMINI_API_KEY')
+                if api_key:
+                    genai.configure(api_key=api_key)
+                    
+                    # Create prompt for LLM
+                    system_prompt = """You are an AI assistant that answers questions based on provided document context.
+
+Instructions:
+1. Answer the user's question using ONLY the information from the provided context
+2. Be specific and accurate
+3. Cite page numbers when referencing information
+4. If the context doesn't contain enough information, say so
+5. Keep answers concise but complete
+6. Use natural, conversational language"""
+                    
+                    user_prompt = f"""Context from documents:
+{context_for_llm}
+
+User question: {request.query}
+
+Please provide a clear, accurate answer based on the context above. Include page references when possible."""
+                    
+                    # Generate response
+                    model = genai.GenerativeModel(
+                        model_name='gemini-1.5-flash',
+                        generation_config={
+                            "temperature": 0.7,
+                            "top_p": 0.95,
+                            "top_k": 40,
+                            "max_output_tokens": 1024,
+                        },
+                        system_instruction=system_prompt
+                    )
+                    
+                    llm_response = model.generate_content(user_prompt)
+                    llm_answer = llm_response.text
+                    
+                    # Format final response
+                    response_text = f"{llm_answer}\n\n"
+                    response_text += "─" * 60 + "\n\n"
+                    
+                    # Add source references
+                    if len(page_refs) == 1:
+                        doc, page = list(page_refs)[0]
+                        response_text += f"📄 **Source**: {doc}, Page {page}\n"
+                    else:
+                        response_text += f"📄 **Sources**: Found across {len(page_refs)} pages:\n"
+                        for doc, page in sorted(page_refs, key=lambda x: x[1]):
+                            response_text += f"   • {doc}, Page {page}\n"
+                    
+                    response_text += f"\n💡 **Tip**: Open your PDF and navigate to these pages for complete details.\n"
+                    
+                else:
+                    # Fallback if no API key
+                    response_text = _generate_fallback_response(
+                        request.query, context_parts, page_refs, query_enhancement
+                    )
+                    
+            except Exception as e:
+                print(f"LLM generation error: {e}")
+                # Fallback to non-LLM response
+                response_text = _generate_fallback_response(
+                    request.query, context_parts, page_refs, query_enhancement
+                )
             
         else:
             response_text = f"**No results found for**: {request.query}\n\n"
