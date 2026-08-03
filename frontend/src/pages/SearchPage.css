@@ -197,8 +197,60 @@
   font-size: 1.05rem;
   line-height: 1.8;
   color: #F1F5F9;
-  white-space: pre-wrap;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.response-paragraph {
+  margin: 0 0 16px 0;
+  color: #F1F5F9;
+}
+
+.response-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.response-bullet {
+  margin: 8px 0 8px 24px;
+  color: #E2E8F0;
+  position: relative;
+}
+
+.response-bullet::before {
+  content: '';
+  position: absolute;
+  left: -16px;
+  top: 10px;
+  width: 6px;
+  height: 6px;
+  background: #667eea;
+  border-radius: 50%;
+}
+
+.response-numbered {
+  margin: 8px 0 8px 8px;
+  color: #E2E8F0;
+}
+
+.response-separator {
+  border: none;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 20px 0;
+}
+
+.response-meta {
+  margin: 16px 0;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  color: #94A3B8;
+  font-size: 0.95rem;
+  border-left: 3px solid #667eea;
+}
+
+.response-content strong {
+  color: #FFFFFF;
+  font-weight: 700;
 }
 
 /* Sources Section */

@@ -224,7 +224,69 @@ const SearchPage = () => {
                     <h3>AI Response</h3>
                   </div>
                   <div className="response-content">
-                    {results.response}
+                    {results.response.split('\n').map((line, idx) => {
+                      // Handle bold text
+                      const boldRegex = /\*\*(.*?)\*\*/g;
+                      const parts = [];
+                      let lastIndex = 0;
+                      let match;
+                      
+                      while ((match = boldRegex.exec(line)) !== null) {
+                        if (match.index > lastIndex) {
+                          parts.push(line.substring(lastIndex, match.index));
+                        }
+                        parts.push(<strong key={`bold-${idx}-${match.index}`}>{match[1]}</strong>);
+                        lastIndex = match.index + match[0].length;
+                      }
+                      
+                      if (lastIndex < line.length) {
+                        parts.push(line.substring(lastIndex));
+                      }
+                      
+                      // Handle bullet points
+                      if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
+                        return (
+                          <div key={idx} className="response-bullet">
+                            {parts.length > 0 ? parts : line}
+                          </div>
+                        );
+                      }
+                      
+                      // Handle numbered lists
+                      if (/^\d+\./.test(line.trim())) {
+                        return (
+                          <div key={idx} className="response-numbered">
+                            {parts.length > 0 ? parts : line}
+                          </div>
+                        );
+                      }
+                      
+                      // Handle separators
+                      if (line.trim().startsWith('─') || line.trim() === '---') {
+                        return <hr key={idx} className="response-separator" />;
+                      }
+                      
+                      // Handle section headers (lines with emoji or special formatting)
+                      if (line.includes('📚') || line.includes('📄') || line.includes('💡')) {
+                        return (
+                          <div key={idx} className="response-meta">
+                            {parts.length > 0 ? parts : line}
+                          </div>
+                        );
+                      }
+                      
+                      // Regular paragraph
+                      if (line.trim()) {
+                        return (
+                          <p key={idx} className="response-paragraph">
+                            {parts.length > 0 ? parts : line}
+                          </p>
+                        );
+                      }
+                      
+                      // Empty line
+                      return <br key={idx} />;
+                    })}
                   </div>
                 </motion.div>
               )}

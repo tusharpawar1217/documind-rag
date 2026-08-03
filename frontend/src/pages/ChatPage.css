@@ -295,3 +295,49 @@
     max-width: 90%;
   }
 }
+
+/* Enhanced message formatting */
+.message-line {
+  margin: 4px 0;
+}
+
+.message-bullet {
+  margin: 6px 0 6px 20px;
+  position: relative;
+}
+
+.message.assistant .message-bullet::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 8px;
+  width: 5px;
+  height: 5px;
+  background: #667eea;
+  border-radius: 50%;
+}
+
+.message-numbered {
+  margin: 6px 0 6px 6px;
+}
+
+.message-separator {
+  border: none;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 12px 0;
+}
+
+.message-meta {
+  margin: 10px 0;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+.message-text strong {
+  font-weight: 700;
+  color: #FFFFFF;
+}

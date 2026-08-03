@@ -160,7 +160,70 @@ const ChatPage = () => {
                     )}
                   </div>
                   <div className="message-content">
-                    <div className="message-text">{message.content}</div>
+                    <div className="message-text">
+                      {message.content.split('\n').map((line, idx) => {
+                        // Handle bold text
+                        const boldRegex = /\*\*(.*?)\*\*/g;
+                        const parts = [];
+                        let lastIndex = 0;
+                        let match;
+                        
+                        while ((match = boldRegex.exec(line)) !== null) {
+                          if (match.index > lastIndex) {
+                            parts.push(line.substring(lastIndex, match.index));
+                          }
+                          parts.push(<strong key={`bold-${idx}-${match.index}`}>{match[1]}</strong>);
+                          lastIndex = match.index + match[0].length;
+                        }
+                        
+                        if (lastIndex < line.length) {
+                          parts.push(line.substring(lastIndex));
+                        }
+                        
+                        // Handle bullet points
+                        if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
+                          return (
+                            <div key={idx} className="message-bullet">
+                              {parts.length > 0 ? parts : line}
+                            </div>
+                          );
+                        }
+                        
+                        // Handle numbered lists
+                        if (/^\d+\./.test(line.trim())) {
+                          return (
+                            <div key={idx} className="message-numbered">
+                              {parts.length > 0 ? parts : line}
+                            </div>
+                          );
+                        }
+                        
+                        // Handle separators
+                        if (line.trim().startsWith('─') || line.trim() === '---') {
+                          return <hr key={idx} className="message-separator" />;
+                        }
+                        
+                        // Handle section headers
+                        if (line.includes('📚') || line.includes('📄') || line.includes('💡')) {
+                          return (
+                            <div key={idx} className="message-meta">
+                              {parts.length > 0 ? parts : line}
+                            </div>
+                          );
+                        }
+                        
+                        // Regular text
+                        if (line.trim()) {
+                          return (
+                            <div key={idx} className="message-line">
+                              {parts.length > 0 ? parts : line}
+                            </div>
+                          );
+                        }
+                        
+                        return <br key={idx} />;
+                      })}
+                    </div>
                     <div className="message-time">
                       {new Date(message.timestamp).toLocaleTimeString()}
                     </div>
