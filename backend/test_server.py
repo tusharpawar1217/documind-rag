@@ -528,6 +528,51 @@ def semantic_search(query: str, top_k: int = 5, exclude_types: List[str] = None)
     return results[:top_k]
 
 
+def _generate_fallback_response(query, context_parts, page_refs, query_enhancement):
+    """Generate response without LLM (fallback) - SHOULD NEVER BE USED NOW."""
+    print("⚠️ WARNING: Using fallback response - LLM synthesis failed!")
+    
+    query_type = query_enhancement.get('query_type', 'general')
+    
+    # Build a structured response without LLM
+    if query_type == "explanation":
+        response = f"**Understanding: {query}**\n\n"
+    elif query_type == "how-to":
+        response = f"**How to: {query}**\n\n"
+    elif query_type == "enumeration":
+        response = f"**List: {query}**\n\n"
+    else:
+        response = f"**Answer to: {query}**\n\n"
+    
+    # Add context - but this should NOT be raw chunks with Source labels!
+    # Try to at least format them better
+    response += "Found relevant information:\n\n"
+    for idx, part in enumerate(context_parts, 1):
+        # Remove the [Source N:...] label and just show content
+        if ']' in part:
+            content_only = part.split(']', 1)[1].strip() if ']' in part else part
+        else:
+            content_only = part
+        response += f"{content_only}\n\n"
+    
+    # Add page summary
+    response += "\n" + "─" * 60 + "\n"
+    response += "**📚 Sources**\n"
+    response += "─" * 60 + "\n\n"
+    if len(page_refs) == 1:
+        doc, page = list(page_refs)[0]
+        response += f"📄 {doc} - Page {page}\n"
+    else:
+        unique_pages = sorted(set(page for doc, page in page_refs))
+        doc_name = list(page_refs)[0][0]
+        pages_str = ", ".join(str(p) for p in unique_pages)
+        response += f"📄 {doc_name} - Pages {pages_str}\n"
+    
+    response += f"\n💡 **Note**: This is a fallback response. LLM synthesis failed.\n"
+    
+    return response
+
+
 def detect_query_intent(query: str) -> str:
     """Detect if query is asking for overview/summary."""
     query_lower = query.lower()
@@ -680,6 +725,9 @@ async def query_documents(request: QueryRequest):
             # Build context for LLM
             context_for_llm = "\n\n".join([result['content'] for result in top_results[:3]])
             
+            print(f"🤖 Calling LLM synthesis...")
+            print(f"📝 Context length: {len(context_for_llm)} chars")
+            
             # Use LLM to generate answer - ALWAYS synthesize, no score threshold
             try:
                 import google.generativeai as genai
@@ -691,6 +739,8 @@ async def query_documents(request: QueryRequest):
                 
                 # Configure Gemini
                 api_key = os.getenv('GEMINI_API_KEY')
+                print(f"🔑 API key present: {bool(api_key)}")
+                
                 if api_key:
                     genai.configure(api_key=api_key)
                     
@@ -751,6 +801,8 @@ Retrieved Context:
                     llm_response = model.generate_content(user_prompt)
                     llm_answer = llm_response.text.strip()
                     
+                    print(f"✅ LLM response received: {len(llm_answer)} chars")
+                    
                     # Build final response with clean structure
                     response_text = llm_answer
                     
@@ -774,12 +826,15 @@ Retrieved Context:
                     
                 else:
                     # Fallback if no API key
+                    print("⚠️ No API key - using fallback")
                     response_text = _generate_fallback_response(
                         request.query, context_parts, page_refs, query_enhancement
                     )
                     
             except Exception as e:
-                print(f"LLM generation error: {e}")
+                print(f"❌ LLM generation error: {e}")
+                import traceback
+                traceback.print_exc()
                 # Fallback to non-LLM response
                 response_text = _generate_fallback_response(
                     request.query, context_parts, page_refs, query_enhancement
