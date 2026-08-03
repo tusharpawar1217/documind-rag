@@ -469,8 +469,9 @@ def semantic_search(query: str, top_k: int = 5, exclude_types: List[str] = None)
     """
     Semantic search using embeddings and cosine similarity.
     Returns ranked chunks based on semantic meaning, not keyword matching.
+    FALLBACK: If embeddings fail, use keyword search.
     """
-    if not chunks_store or not chunk_embeddings:
+    if not chunks_store:
         return []
     
     if exclude_types is None:
@@ -480,7 +481,12 @@ def semantic_search(query: str, top_k: int = 5, exclude_types: List[str] = None)
     query_embedding = generate_embedding(query)
     if not query_embedding:
         print("⚠️ Failed to generate query embedding, falling back to keyword search")
-        return []
+        return keyword_search_fallback(query, top_k, exclude_types)
+    
+    # Continue with semantic search only if embeddings are available
+    if not chunk_embeddings:
+        print("⚠️ No chunk embeddings available, falling back to keyword search")
+        return keyword_search_fallback(query, top_k, exclude_types)
     
     # Filter chunks by type
     valid_indices = []
@@ -525,6 +531,61 @@ def semantic_search(query: str, top_k: int = 5, exclude_types: List[str] = None)
     # Sort by score (highest first)
     results.sort(key=lambda x: x['score'], reverse=True)
     
+    return results[:top_k]
+
+
+def keyword_search_fallback(query: str, top_k: int = 5, exclude_types: List[str] = None) -> List[dict]:
+    """Keyword search fallback when embeddings fail."""
+    print(f"🔍 Using keyword search fallback for: {query}")
+    
+    if exclude_types is None:
+        exclude_types = ['front_matter', 'references']
+    
+    query_lower = query.lower()
+    query_words = [w for w in query_lower.split() if len(w) > 2]
+    
+    results = []
+    
+    for chunk in chunks_store:
+        chunk_type = chunk.get('chunk_type', 'content')
+        if chunk_type in exclude_types:
+            continue
+            
+        content_lower = chunk['content'].lower()
+        
+        # Calculate relevance score
+        score = 0.0
+        
+        # Exact phrase match
+        if query_lower in content_lower:
+            score = 0.95
+        else:
+            # Word matching
+            matching_words = sum(1 for word in query_words if word in content_lower)
+            if matching_words > 0:
+                score = (matching_words / len(query_words)) * 0.85
+                
+                # Boost for multiple matches
+                for word in query_words:
+                    if word in content_lower:
+                        score += 0.05
+        
+        if score > 0:
+            results.append({
+                "content": chunk['content'],
+                "score": min(score, 1.0),
+                "metadata": {
+                    "document_id": chunk['document_id'],
+                    "document_name": chunk['document_name'],
+                    "page_number": chunk['page_number'],
+                    "position_on_page": chunk.get('position_on_page', 'unknown'),
+                    "chunk_index": chunk['chunk_index'],
+                    "char_length": chunk['char_length'],
+                    "chunk_type": chunk.get('chunk_type', 'content')
+                }
+            })
+    
+    results.sort(key=lambda x: x['score'], reverse=True)
     return results[:top_k]
 
 
@@ -746,22 +807,23 @@ async def query_documents(request: QueryRequest):
                     
                     # Create prompt for LLM
                     # System prompt following your exact specification
-                    system_prompt = """You are DocuMind, an AI document assistant.
-
-Task: Synthesize a clear, coherent, and well-structured answer to the user's query based strictly on the provided context chunks.
+                    system_prompt = """You are DocuMind, a research assistant that answers questions using ONLY the provided document excerpts.
 
 Rules:
-- Do NOT output raw chunks or snippet headers directly.
-- Formulate complete, professional sentences and rephrase where necessary.
-- If key details are cut off in the context, synthesize what is available.
-- Use proper formatting: **bold** for emphasis, bullet points for lists, clear paragraphs
-- Reference page numbers naturally when relevant (e.g., "The methodology on page 5...")
-- Never say "based on the context" - it's implied
-- Be direct, professional, and well-structured
-- Use section headers when appropriate (e.g., **Overview**, **Key Highlights**)
-- If listing items, use bullet points (•) or numbered lists
-- Keep paragraphs concise (2-4 sentences)
-- Never fabricate information beyond the provided context"""
+
+1. Never output raw chunks, source labels, or "[Source N]" — synthesize a single coherent answer.
+
+2. Write in complete sentences. Never end mid-word or mid-clause.
+
+3. Match answer length to available information:
+   - If context is thin (1 short excerpt, tangential to the query), give a brief 2-4 sentence answer and say plainly that the document doesn't cover this in depth.
+   - If context is rich (multiple relevant excerpts), give a fuller answer with structure: a short intro sentence, then 2-4 bullet points for key facts, then a closing sentence if needed.
+
+4. Use **bold** only for genuinely key terms (names, numbers, technical terms) — not every noun.
+
+5. Do not invent information not present in the excerpts. If the excerpts don't answer the question, say so directly instead of padding.
+
+6. Do not mention "chunks," "sources," or "excerpts" in the answer text itself — write as if you simply know the document. Citations are added separately after your answer, not by you."""
                     
                     # Query-type specific formatting guidance
                     query_type = query_enhancement['query_type']
@@ -779,10 +841,11 @@ Rules:
                         formatting_hint = "\nFormat your answer with: clear structure, bold emphasis for key terms."
                     
                     # Format prompt exactly as specified
-                    user_prompt = f"""User Query: {request.query}
+                    user_prompt = f"""Document excerpts:
 
-Retrieved Context:
 {context_for_llm}
+
+Question: {request.query}
 
 {formatting_hint}"""
                     
@@ -936,27 +999,32 @@ async def chat_with_documents(request: ChatRequest):
                     history_context += f"{msg.role.upper()}: {msg.content}\n"
             
             # Create prompt using DocuMind system prompt
-            system_instruction = """You are DocuMind, an AI document assistant.
-
-Task: Synthesize a clear, coherent, and well-structured answer to the user's query based strictly on the provided context chunks.
+            system_instruction = """You are DocuMind, a research assistant that answers questions using ONLY the provided document excerpts.
 
 Rules:
-- Do NOT output raw chunks or snippet headers directly.
-- Formulate complete, professional sentences and rephrase where necessary.
-- If key details are cut off in the context, synthesize what is available.
-- Use proper formatting: **bold** for emphasis, bullet points for lists
-- Reference page numbers naturally (e.g., "The methodology on page 5...")
-- Never say "based on the context"
-- Be conversational and natural
-- If this is a follow-up question, consider the conversation history"""
-            
-            prompt = f"""User Query: {request.message}
 
-Retrieved Context:
+1. Never output raw chunks, source labels, or "[Source N]" — synthesize a single coherent answer.
+
+2. Write in complete sentences. Never end mid-word or mid-clause.
+
+3. Match answer length to available information:
+   - If context is thin (1 short excerpt, tangential to the query), give a brief 2-4 sentence answer and say plainly that the document doesn't cover this in depth.
+   - If context is rich (multiple relevant excerpts), give a fuller answer with structure: a short intro sentence, then 2-4 bullet points for key facts, then a closing sentence if needed.
+
+4. Use **bold** only for genuinely key terms (names, numbers, technical terms) — not every noun.
+
+5. Do not invent information not present in the excerpts. If the excerpts don't answer the question, say so directly instead of padding.
+
+6. Do not mention "chunks," "sources," or "excerpts" in the answer text itself — write as if you simply know the document. Citations are added separately after your answer, not by you."""
+            
+            prompt = f"""Document excerpts:
+
 {context}
 {history_context}
 
-Format your answer clearly with structure, bold emphasis for key terms."""
+Question: {request.message}
+
+Provide a clear, well-structured answer based on the document information."""
             
             try:
                 chat_model = genai.GenerativeModel(
