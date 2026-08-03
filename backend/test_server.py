@@ -512,86 +512,46 @@ async def query_documents(request: QueryRequest):
                     genai.configure(api_key=api_key)
                     
                     # Create prompt for LLM
-                    # Create enhanced system prompt for better synthesis
-                    system_prompt = """You are an intelligent document assistant powered by advanced RAG (Retrieval-Augmented Generation).
+                    # System prompt following your exact specification
+                    system_prompt = """You are DocuMind, an AI document assistant.
 
-YOUR CORE PURPOSE:
-Synthesize information from document fragments into clear, fluent, professional answers.
+Task: Synthesize a clear, coherent, and well-structured answer to the user's query based strictly on the provided context chunks.
 
-CRITICAL RULES:
-
-1. **SYNTHESIZE, DON'T COPY-PASTE**
-   - Transform raw document chunks into complete, grammatically correct sentences
-   - Rephrase and restructure information naturally
-   - Connect ideas across multiple chunks coherently
-   - NEVER output fragmented or truncated text
-
-2. **ANSWER STRUCTURE**
-   - Start with a direct, concise answer to the question
-   - Follow with supporting details organized logically
-   - Use clear paragraphs (2-4 sentences each)
-   - Add bullet points or numbered lists when listing items
-   - Bold key terms or important concepts
-
-3. **SOURCE ATTRIBUTION**
-   - Reference page numbers naturally when relevant (e.g., "The research methodology on page 5 indicates...")
-   - Don't use awkward phrases like "According to the context"
-   - Integrate citations smoothly into your narrative
-
-4. **COMPLETENESS & HONESTY**
-   - If context partially answers the question, say what you CAN answer and what's missing
-   - If information seems incomplete or cut off, note this
-   - Never fabricate or hallucinate information beyond the context
-
-5. **TONE & STYLE**
-   - Professional but conversational
-   - Clear and accessible language
-   - Confident when information is present
-   - Appropriately cautious when information is limited
-
-6. **FORMATTING FOR READABILITY**
-   - Use line breaks between paragraphs
-   - Use **bold** for emphasis
-   - Use bullet points (•) for lists
-   - Use numbered lists (1., 2., 3.) for sequences or steps
-   - Keep sentences concise (15-25 words ideal)
-
-EXAMPLES OF GOOD VS BAD:
-
-❌ BAD (Raw chunk): "Phonetic... Reso... Technolog..."
-✅ GOOD: "The thesis explores phonetic analysis, resonance patterns, and technology applications in voice detection systems."
-
-❌ BAD: "Based on the context provided, the document states that..."
-✅ GOOD: "The research methodology combines deep learning with acoustic feature extraction to detect AI-generated voices."
-
-YOUR GOAL: Transform document fragments into professional, fluent answers that sound like they were written by a knowledgeable human expert."""
+Rules:
+- Do NOT output raw chunks or snippet headers directly.
+- Formulate complete, professional sentences and rephrase where necessary.
+- If key details are cut off in the context, synthesize what is available.
+- Use proper formatting: **bold** for emphasis, bullet points for lists, clear paragraphs
+- Reference page numbers naturally when relevant (e.g., "The methodology on page 5...")
+- Never say "based on the context" - it's implied
+- Be direct, professional, and well-structured
+- Use section headers when appropriate (e.g., **Overview**, **Key Highlights**)
+- If listing items, use bullet points (•) or numbered lists
+- Keep paragraphs concise (2-4 sentences)
+- Never fabricate information beyond the provided context"""
                     
-                    # Add query-type specific instructions
+                    # Query-type specific formatting guidance
                     query_type = query_enhancement['query_type']
                     formatting_hint = ""
                     
                     if query_type == "explanation":
-                        formatting_hint = "\n\nFormat: Start with a clear definition, then explain the details."
+                        formatting_hint = "\nFormat your answer with: **Title**, then clear explanation with key highlights."
                     elif query_type == "how-to":
-                        formatting_hint = "\n\nFormat: Provide step-by-step instructions or describe the process clearly."
+                        formatting_hint = "\nFormat your answer with: step-by-step instructions or process description."
                     elif query_type == "enumeration":
-                        formatting_hint = "\n\nFormat: Use a numbered or bulleted list."
+                        formatting_hint = "\nFormat your answer with: bullet points (•) or numbered list."
                     elif query_type == "reasoning":
-                        formatting_hint = "\n\nFormat: Explain the reasons or causes clearly."
-                    elif query_type == "factual":
-                        formatting_hint = "\n\nFormat: Provide the specific fact or data directly."
+                        formatting_hint = "\nFormat your answer with: clear explanation of reasons/causes."
+                    else:
+                        formatting_hint = "\nFormat your answer with: clear structure, bold emphasis for key terms."
                     
-                    user_prompt = f"""DOCUMENT CONTEXT:
-─────────────────────────────────────────
+                    # Format prompt exactly as specified
+                    user_prompt = f"""User Query: {request.query}
+
+Retrieved Context:
 {context_for_llm}
-─────────────────────────────────────────
 
-USER'S QUESTION: {request.query}
-
-TASK:
-Synthesize the information from the document context above into a clear, professional answer. Transform any fragmented text into complete sentences. Write fluently and naturally.{formatting_hint}
-
-Your synthesized answer:"""
+{formatting_hint}"""
                     
                     # Generate response with optimized settings for synthesis
                     model = genai.GenerativeModel(
@@ -608,25 +568,26 @@ Your synthesized answer:"""
                     llm_response = model.generate_content(user_prompt)
                     llm_answer = llm_response.text.strip()
                     
-                    # Format final response with clear structure
-                    response_text = f"{llm_answer}\n\n"
+                    # Build final response with clean structure
+                    response_text = llm_answer
                     
-                    # Add visual separator
-                    response_text += "\n" + "─" * 60 + "\n"
-                    response_text += "📚 **SOURCES**\n"
+                    # Add source section at the bottom
+                    response_text += "\n\n" + "─" * 60 + "\n"
+                    response_text += "**📚 Sources**\n"
                     response_text += "─" * 60 + "\n\n"
                     
-                    # Add source references with better formatting
+                    # Format sources clearly
                     if len(page_refs) == 1:
                         doc, page = list(page_refs)[0]
-                        response_text += f"📄 **Document**: {doc}\n"
-                        response_text += f"📑 **Page**: {page}\n"
+                        response_text += f"📄 {doc} - Page {page}\n"
                     else:
-                        response_text += f"📚 **Found across {len(page_refs)} pages**:\n\n"
-                        for idx, (doc, page) in enumerate(sorted(page_refs, key=lambda x: x[1]), 1):
-                            response_text += f"   {idx}. {doc} - Page {page}\n"
-                    
-                    response_text += f"\n💡 **Tip**: Open your PDF to verify these details on the referenced pages."
+                        unique_pages = sorted(set(page for doc, page in page_refs))
+                        doc_name = list(page_refs)[0][0]
+                        if len(unique_pages) <= 3:
+                            pages_str = ", ".join(str(p) for p in unique_pages)
+                            response_text += f"📄 {doc_name} - Pages {pages_str}\n"
+                        else:
+                            response_text += f"📄 {doc_name} - Found across {len(unique_pages)} pages\n"
                     
                 else:
                     # Fallback if no API key
@@ -736,28 +697,41 @@ async def chat_with_documents(request: ChatRequest):
                 for msg in recent_history:
                     history_context += f"{msg.role.upper()}: {msg.content}\n"
             
-            # Create prompt for LLM
-            prompt = f"""You are a helpful AI assistant that answers questions based on document content.
+            # Create prompt using DocuMind system prompt
+            system_instruction = """You are DocuMind, an AI document assistant.
 
-CONTEXT FROM DOCUMENTS:
+Task: Synthesize a clear, coherent, and well-structured answer to the user's query based strictly on the provided context chunks.
+
+Rules:
+- Do NOT output raw chunks or snippet headers directly.
+- Formulate complete, professional sentences and rephrase where necessary.
+- If key details are cut off in the context, synthesize what is available.
+- Use proper formatting: **bold** for emphasis, bullet points for lists
+- Reference page numbers naturally (e.g., "The methodology on page 5...")
+- Never say "based on the context"
+- Be conversational and natural
+- If this is a follow-up question, consider the conversation history"""
+            
+            prompt = f"""User Query: {request.message}
+
+Retrieved Context:
 {context}
 {history_context}
 
-USER QUESTION: {request.message}
-
-INSTRUCTIONS:
-- Answer based on the provided context from documents
-- Be conversational and natural
-- If the context contains the answer, provide it with confidence
-- Reference page numbers when relevant (e.g., "According to page 5...")
-- If the context doesn't fully answer the question, say so honestly
-- Keep responses concise but informative
-- If this is a follow-up question, consider the conversation history
-
-ANSWER:"""
+Format your answer clearly with structure, bold emphasis for key terms."""
             
             try:
-                response = llm_model.generate_content(prompt)
+                chat_model = genai.GenerativeModel(
+                    model_name='gemini-1.5-flash',
+                    generation_config={
+                        "temperature": 0.3,
+                        "top_p": 0.9,
+                        "top_k": 30,
+                        "max_output_tokens": 1024,
+                    },
+                    system_instruction=system_instruction
+                )
+                response = chat_model.generate_content(prompt)
                 assistant_response = response.text
             except Exception as e:
                 print(f"LLM generation error: {e}")
