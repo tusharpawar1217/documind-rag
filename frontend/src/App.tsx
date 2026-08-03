@@ -6,6 +6,7 @@ import HomePage from './pages/HomePage'
 import UploadPage from './pages/UploadPage'
 import SearchPage from './pages/SearchPage'
 import DocumentsPage from './pages/DocumentsPage'
+import ChatPage from './pages/ChatPage'
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/search" element={<SearchPage />} />
+          <Route path="/chat" element={<ChatPage />} />
           <Route path="/documents" element={<DocumentsPage />} />
         </Routes>
       </Layout>

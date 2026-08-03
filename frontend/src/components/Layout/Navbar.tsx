@@ -8,7 +8,8 @@ import {
   FileText, 
   Menu, 
   X,
-  Zap
+  Zap,
+  MessageSquare
 } from 'lucide-react'
 import './Navbar.css'
 
@@ -20,6 +21,7 @@ const Navbar = () => {
     { path: '/', label: 'Home', icon: Home },
     { path: '/upload', label: 'Upload', icon: Upload },
     { path: '/search', label: 'Search', icon: Search },
+    { path: '/chat', label: 'Chat', icon: MessageSquare },
     { path: '/documents', label: 'Documents', icon: FileText },
   ]
 
