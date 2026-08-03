@@ -243,23 +243,83 @@ async def upload_document(file: UploadFile = File(...)):
             
             all_text += page_text + "\n\n"
             
-            # Smart chunking: Split page into paragraphs/sections
-            paragraphs = [p.strip() for p in page_text.split('\n\n') if p.strip() and len(p.strip()) > 50]
+            # IMPROVED CHUNKING: Recursive Character Text Splitter approach
+            # Try to split at natural boundaries with overlap
             
-            # If no good paragraphs, split by sentences
-            if not paragraphs and page_text.strip():
-                sentences = [s.strip() + '.' for s in page_text.split('.') if len(s.strip()) > 20]
-                # Group sentences into chunks of ~500 chars
-                chunk_text = ""
-                for sentence in sentences:
-                    if len(chunk_text) + len(sentence) < 500:
-                        chunk_text += " " + sentence
+            # First, try paragraph boundaries
+            raw_paragraphs = [p.strip() for p in page_text.split('\n\n') if p.strip()]
+            
+            paragraphs = []
+            chunk_size = 800  # Target chunk size in characters
+            chunk_overlap = 150  # Overlap between chunks for context continuity
+            
+            if raw_paragraphs:
+                # Process each paragraph
+                for para in raw_paragraphs:
+                    # If paragraph is small enough, keep it as is
+                    if len(para) <= chunk_size:
+                        if len(para) > 100:  # Only keep substantial paragraphs
+                            paragraphs.append(para)
                     else:
-                        if chunk_text:
-                            paragraphs.append(chunk_text.strip())
-                        chunk_text = sentence
-                if chunk_text:
-                    paragraphs.append(chunk_text.strip())
+                        # Split large paragraph by sentences
+                        # Split on multiple sentence endings
+                        import re
+                        sentences = re.split(r'(?<=[.!?])\s+', para)
+                        
+                        current_chunk = ""
+                        for sentence in sentences:
+                            # Add sentence to current chunk if it fits
+                            if len(current_chunk) + len(sentence) <= chunk_size:
+                                current_chunk += " " + sentence if current_chunk else sentence
+                            else:
+                                # Save current chunk and start new one with overlap
+                                if current_chunk:
+                                    paragraphs.append(current_chunk.strip())
+                                    
+                                    # Create overlap from end of previous chunk
+                                    words = current_chunk.split()
+                                    overlap_words = []
+                                    overlap_len = 0
+                                    for word in reversed(words):
+                                        if overlap_len + len(word) < chunk_overlap:
+                                            overlap_words.insert(0, word)
+                                            overlap_len += len(word) + 1
+                                        else:
+                                            break
+                                    
+                                    current_chunk = " ".join(overlap_words) + " " + sentence
+                                else:
+                                    current_chunk = sentence
+                        
+                        # Add last chunk
+                        if current_chunk and len(current_chunk.strip()) > 100:
+                            paragraphs.append(current_chunk.strip())
+            
+            # If still no good chunks, fall back to simple word-based splitting
+            if not paragraphs and page_text.strip():
+                words = page_text.split()
+                current_chunk = []
+                current_length = 0
+                
+                for word in words:
+                    current_chunk.append(word)
+                    current_length += len(word) + 1
+                    
+                    if current_length >= chunk_size:
+                        chunk_text = " ".join(current_chunk)
+                        if len(chunk_text) > 100:
+                            paragraphs.append(chunk_text)
+                        
+                        # Keep overlap
+                        overlap_words = current_chunk[-20:] if len(current_chunk) > 20 else current_chunk
+                        current_chunk = overlap_words
+                        current_length = sum(len(w) + 1 for w in overlap_words)
+                
+                # Add final chunk
+                if current_chunk:
+                    chunk_text = " ".join(current_chunk)
+                    if len(chunk_text) > 100:
+                        paragraphs.append(chunk_text)
             
             # Store chunks with page information
             for para_idx, chunk_text in enumerate(paragraphs):
@@ -452,32 +512,59 @@ async def query_documents(request: QueryRequest):
                     genai.configure(api_key=api_key)
                     
                     # Create prompt for LLM
-                    system_prompt = """You are a helpful AI assistant that provides clear, accurate answers based on document context.
+                    # Create enhanced system prompt for better synthesis
+                    system_prompt = """You are an intelligent document assistant powered by advanced RAG (Retrieval-Augmented Generation).
 
-INSTRUCTIONS:
-1. Read the provided context carefully
-2. Answer the user's question using ONLY information from the context
-3. Write in a natural, conversational tone
-4. Structure your answer clearly:
-   - Start with a direct answer
-   - Provide supporting details
-   - Use bullet points or numbered lists when listing multiple items
-   - Keep paragraphs short and readable
-5. If the context mentions page numbers, reference them naturally in your answer
-6. If the context doesn't fully answer the question, acknowledge what you can and cannot answer
-7. Be concise but complete - aim for 2-4 sentences for simple questions, more for complex ones
-8. Use proper formatting: bold for emphasis, line breaks for readability
+YOUR CORE PURPOSE:
+Synthesize information from document fragments into clear, fluent, professional answers.
 
-NEVER:
-- Make up information not in the context
-- Say "based on the context" (it's implied)
-- Copy-paste large chunks verbatim
-- Give vague or generic answers
+CRITICAL RULES:
 
-ALWAYS:
-- Be specific and precise
-- Use examples from the context when relevant
-- Write as if explaining to a colleague"""
+1. **SYNTHESIZE, DON'T COPY-PASTE**
+   - Transform raw document chunks into complete, grammatically correct sentences
+   - Rephrase and restructure information naturally
+   - Connect ideas across multiple chunks coherently
+   - NEVER output fragmented or truncated text
+
+2. **ANSWER STRUCTURE**
+   - Start with a direct, concise answer to the question
+   - Follow with supporting details organized logically
+   - Use clear paragraphs (2-4 sentences each)
+   - Add bullet points or numbered lists when listing items
+   - Bold key terms or important concepts
+
+3. **SOURCE ATTRIBUTION**
+   - Reference page numbers naturally when relevant (e.g., "The research methodology on page 5 indicates...")
+   - Don't use awkward phrases like "According to the context"
+   - Integrate citations smoothly into your narrative
+
+4. **COMPLETENESS & HONESTY**
+   - If context partially answers the question, say what you CAN answer and what's missing
+   - If information seems incomplete or cut off, note this
+   - Never fabricate or hallucinate information beyond the context
+
+5. **TONE & STYLE**
+   - Professional but conversational
+   - Clear and accessible language
+   - Confident when information is present
+   - Appropriately cautious when information is limited
+
+6. **FORMATTING FOR READABILITY**
+   - Use line breaks between paragraphs
+   - Use **bold** for emphasis
+   - Use bullet points (•) for lists
+   - Use numbered lists (1., 2., 3.) for sequences or steps
+   - Keep sentences concise (15-25 words ideal)
+
+EXAMPLES OF GOOD VS BAD:
+
+❌ BAD (Raw chunk): "Phonetic... Reso... Technolog..."
+✅ GOOD: "The thesis explores phonetic analysis, resonance patterns, and technology applications in voice detection systems."
+
+❌ BAD: "Based on the context provided, the document states that..."
+✅ GOOD: "The research methodology combines deep learning with acoustic feature extraction to detect AI-generated voices."
+
+YOUR GOAL: Transform document fragments into professional, fluent answers that sound like they were written by a knowledgeable human expert."""
                     
                     # Add query-type specific instructions
                     query_type = query_enhancement['query_type']
@@ -494,22 +581,26 @@ ALWAYS:
                     elif query_type == "factual":
                         formatting_hint = "\n\nFormat: Provide the specific fact or data directly."
                     
-                    user_prompt = f"""Here is the relevant information from the documents:
-
+                    user_prompt = f"""DOCUMENT CONTEXT:
+─────────────────────────────────────────
 {context_for_llm}
+─────────────────────────────────────────
 
-Question: {request.query}
+USER'S QUESTION: {request.query}
 
-Please provide a clear, well-structured answer to the question above using the information provided. Format your response for easy reading.{formatting_hint}"""
+TASK:
+Synthesize the information from the document context above into a clear, professional answer. Transform any fragmented text into complete sentences. Write fluently and naturally.{formatting_hint}
+
+Your synthesized answer:"""
                     
-                    # Generate response
+                    # Generate response with optimized settings for synthesis
                     model = genai.GenerativeModel(
                         model_name='gemini-1.5-flash',
                         generation_config={
-                            "temperature": 0.4,  # Lower for more factual, focused answers
-                            "top_p": 0.95,
-                            "top_k": 40,
-                            "max_output_tokens": 2048,  # Allow longer, detailed answers
+                            "temperature": 0.3,  # Lower for factual accuracy, minimal creativity
+                            "top_p": 0.9,        # Focused sampling
+                            "top_k": 30,         # More deterministic
+                            "max_output_tokens": 1024,  # Concise but complete answers
                         },
                         system_instruction=system_prompt
                     )
