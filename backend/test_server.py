@@ -14,16 +14,19 @@ import io
 import uuid
 from datetime import datetime
 import google.generativeai as genai
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Load environment variables
 load_dotenv()
 
-# Initialize Gemini for LLM responses
+# Initialize Gemini for LLM responses and embeddings
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     llm_model = genai.GenerativeModel('gemini-1.5-flash')
     print("✅ Gemini LLM initialized")
+    print("✅ Embedding model ready (text-embedding-004)")
 else:
     llm_model = None
     print("⚠️ Gemini API key not found - chat will use simple responses")
@@ -43,8 +46,66 @@ app.add_middleware(
 # In-memory storage
 documents = []
 chunks_store = []
+chunk_embeddings = []  # Store embeddings for semantic search
 chat_history = []  # Store conversation history
 chat_sessions = {}  # Store chat history per session
+
+
+def generate_embedding(text: str) -> List[float]:
+    """Generate embedding using Gemini's text-embedding-004 model."""
+    try:
+        result = genai.embed_content(
+            model="models/text-embedding-004",
+            content=text,
+            task_type="retrieval_document"
+        )
+        return result['embedding']
+    except Exception as e:
+        print(f"Embedding error: {e}")
+        return None
+
+
+def classify_chunk_type(text: str, page_num: int) -> str:
+    """Classify chunk as front-matter, content, or references."""
+    text_lower = text.lower()
+    
+    # Front-matter detection
+    front_matter_indicators = [
+        'bonafide certificate', 'certificate of approval',
+        'acknowledgement', 'acknowledgment',
+        'table of contents', 'list of figures', 'list of tables',
+        'declaration', 'this is to certify',
+        'under my supervision', 'declare that'
+    ]
+    
+    for indicator in front_matter_indicators:
+        if indicator in text_lower:
+            return 'front_matter'
+    
+    # References/Bibliography detection
+    references_indicators = [
+        'bibliography', 'references', 'works cited',
+        '[1]', '[2]', '[3]',  # Numbered references
+    ]
+    
+    # Check if page has heavy reference patterns
+    if any(indicator in text_lower for indicator in references_indicators):
+        # Also check for reference-like patterns
+        if text.count('[') > 3 or text.count('doi:') > 2:
+            return 'references'
+    
+    # Abstract/Introduction detection (high priority content)
+    high_priority_indicators = [
+        'abstract', 'introduction', 'chapter 1',
+        'this thesis', 'this research', 'this work presents',
+        'main contribution', 'key contribution'
+    ]
+    
+    if any(indicator in text_lower[:200] for indicator in high_priority_indicators):
+        return 'high_priority_content'
+    
+    # Regular content
+    return 'content'
 
 
 class QueryRequest(BaseModel):
@@ -321,7 +382,7 @@ async def upload_document(file: UploadFile = File(...)):
                     if len(chunk_text) > 100:
                         paragraphs.append(chunk_text)
             
-            # Store chunks with page information
+            # Store chunks with page information, embeddings, and classification
             for para_idx, chunk_text in enumerate(paragraphs):
                 # Calculate position on page (beginning, middle, end)
                 position_pct = (para_idx + 1) / len(paragraphs) if paragraphs else 0
@@ -332,7 +393,13 @@ async def upload_document(file: UploadFile = File(...)):
                 else:
                     position = "bottom"
                 
-                chunks_store.append({
+                # Classify chunk type
+                chunk_type = classify_chunk_type(chunk_text, page_num + 1)
+                
+                # Generate embedding for semantic search
+                embedding = generate_embedding(chunk_text)
+                
+                chunk_data = {
                     "chunk_id": f"{len(documents)}_page{page_num+1}_chunk{para_idx}",
                     "document_id": f"doc_{len(documents)}",
                     "document_name": file.filename,
@@ -342,11 +409,30 @@ async def upload_document(file: UploadFile = File(...)):
                     "position_on_page": position,
                     "paragraph_index": para_idx,
                     "char_length": len(chunk_text),
-                    "page_total_chunks": len(paragraphs)
-                })
+                    "page_total_chunks": len(paragraphs),
+                    "chunk_type": chunk_type,  # NEW: front_matter, content, high_priority_content, references
+                }
+                
+                chunks_store.append(chunk_data)
+                
+                if embedding:
+                    chunk_embeddings.append(embedding)
+                else:
+                    # Fallback: zero vector if embedding fails
+                    chunk_embeddings.append([0.0] * 768)
+                
                 chunk_index += 1
         
         pdf_document.close()
+        
+        # Count chunk types for stats
+        chunk_types_count = {}
+        for chunk in chunks_store[len(chunks_store) - chunk_index:]:
+            ctype = chunk.get('chunk_type', 'content')
+            chunk_types_count[ctype] = chunk_types_count.get(ctype, 0) + 1
+        
+        print(f"✅ Generated {chunk_index} embeddings")
+        print(f"📊 Chunk types: {chunk_types_count}")
         
         # Store document info
         doc_id = f"doc_{len(documents)}"
@@ -357,24 +443,131 @@ async def upload_document(file: UploadFile = File(...)):
             "num_pages": num_pages,
             "num_chunks": chunk_index,
             "text_length": len(all_text),
-            "pages_info": page_texts
+            "pages_info": page_texts,
+            "chunk_types": chunk_types_count
         }
         documents.append(doc_info)
         
         return {
             "status": "success",
-            "message": f"Document uploaded and processed successfully. Extracted {num_pages} pages and {chunk_index} chunks.",
+            "message": f"Document uploaded and processed successfully. Extracted {num_pages} pages and {chunk_index} chunks with embeddings.",
             "document": {
                 "id": doc_id,
                 "filename": file.filename,
                 "size": len(content),
                 "num_pages": num_pages,
-                "num_chunks": chunk_index
+                "num_chunks": chunk_index,
+                "chunk_types": chunk_types_count
             }
         }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+
+def semantic_search(query: str, top_k: int = 5, exclude_types: List[str] = None) -> List[dict]:
+    """
+    Semantic search using embeddings and cosine similarity.
+    Returns ranked chunks based on semantic meaning, not keyword matching.
+    """
+    if not chunks_store or not chunk_embeddings:
+        return []
+    
+    if exclude_types is None:
+        exclude_types = ['front_matter', 'references']  # Default: exclude boilerplate
+    
+    # Generate query embedding
+    query_embedding = generate_embedding(query)
+    if not query_embedding:
+        print("⚠️ Failed to generate query embedding, falling back to keyword search")
+        return []
+    
+    # Filter chunks by type
+    valid_indices = []
+    valid_chunks = []
+    
+    for idx, chunk in enumerate(chunks_store):
+        chunk_type = chunk.get('chunk_type', 'content')
+        if chunk_type not in exclude_types:
+            valid_indices.append(idx)
+            valid_chunks.append(chunk)
+    
+    if not valid_chunks:
+        print("⚠️ No valid chunks after filtering")
+        return []
+    
+    # Get embeddings for valid chunks
+    valid_embeddings = [chunk_embeddings[idx] for idx in valid_indices]
+    
+    # Calculate cosine similarity
+    query_emb_array = np.array(query_embedding).reshape(1, -1)
+    chunk_emb_array = np.array(valid_embeddings)
+    
+    similarities = cosine_similarity(query_emb_array, chunk_emb_array)[0]
+    
+    # Create results with scores
+    results = []
+    for idx, (chunk, score) in enumerate(zip(valid_chunks, similarities)):
+        results.append({
+            "content": chunk['content'],
+            "score": float(score),
+            "metadata": {
+                "document_id": chunk['document_id'],
+                "document_name": chunk['document_name'],
+                "page_number": chunk['page_number'],
+                "position_on_page": chunk.get('position_on_page', 'unknown'),
+                "chunk_index": chunk['chunk_index'],
+                "char_length": chunk['char_length'],
+                "chunk_type": chunk.get('chunk_type', 'content')
+            }
+        })
+    
+    # Sort by score (highest first)
+    results.sort(key=lambda x: x['score'], reverse=True)
+    
+    return results[:top_k]
+
+
+def detect_query_intent(query: str) -> str:
+    """Detect if query is asking for overview/summary."""
+    query_lower = query.lower()
+    
+    overview_keywords = [
+        'what is this about', 'summarize', 'summary', 'overview',
+        'main contribution', 'key contribution', 'what does this',
+        'tell me about', 'describe this', 'explain this thesis',
+        'what is the research', 'research about'
+    ]
+    
+    for keyword in overview_keywords:
+        if keyword in query_lower:
+            return 'overview'
+    
+    return 'specific'
+
+
+def get_high_priority_chunks() -> List[dict]:
+    """Get Abstract/Introduction chunks for overview questions."""
+    high_priority = []
+    
+    for idx, chunk in enumerate(chunks_store):
+        if chunk.get('chunk_type') == 'high_priority_content':
+            if idx < len(chunk_embeddings):
+                high_priority.append({
+                    "content": chunk['content'],
+                    "score": 1.0,  # Max score for forced inclusion
+                    "metadata": {
+                        "document_id": chunk['document_id'],
+                        "document_name": chunk['document_name'],
+                        "page_number": chunk['page_number'],
+                        "position_on_page": chunk.get('position_on_page', 'unknown'),
+                        "chunk_index": chunk['chunk_index'],
+                        "char_length": chunk['char_length'],
+                        "chunk_type": chunk.get('chunk_type', 'content')
+                    }
+                })
+    
+    return high_priority[:3]  # Top 3 high-priority chunks
 
 
 def _generate_fallback_response(query, context_parts, page_refs, query_enhancement):
@@ -414,7 +607,7 @@ def _generate_fallback_response(query, context_parts, page_refs, query_enhanceme
 
 @app.post("/api/v1/search/query", response_model=QueryResponse)
 async def query_documents(request: QueryRequest):
-    """Search documents with chat history, prompt enhancement, and page-level accuracy."""
+    """Search documents with SEMANTIC SEARCH using embeddings."""
     try:
         session_id = request.session_id or "default"
         
@@ -424,57 +617,47 @@ async def query_documents(request: QueryRequest):
         # Enhance the user's raw query
         query_enhancement = enhance_user_prompt(request.query, context_history)
         enhanced_query = query_enhancement['enhanced']
-        search_keywords = query_enhancement['search_keywords']
         
         # Save user query to history
         save_to_chat_history(session_id, "user", request.query, query_enhancement)
         
-        # Search using enhanced keywords
-        query_lower = search_keywords.lower()
+        # Detect query intent (overview vs specific)
+        intent = detect_query_intent(request.query)
         
-        # Enhanced keyword search with relevance scoring
-        results = []
-        for chunk in chunks_store:
-            content_lower = chunk['content'].lower()
-            
-            # Calculate relevance score
-            score = 0.0
-            key_terms = query_enhancement['key_terms']
-            content_words = content_lower.split()
-            
-            # Exact phrase match (highest score)
-            if query_lower in content_lower or request.query.lower() in content_lower:
-                score = 0.95
-            else:
-                # Key term matching
-                matching_terms = sum(1 for term in key_terms if term in content_words)
-                if matching_terms > 0:
-                    score = (matching_terms / len(key_terms)) * 0.85
-                
-                # Boost score if multiple terms appear close together
-                for term in key_terms:
-                    if term in content_lower:
-                        score += 0.05
-            
-            if score > 0:
-                results.append({
-                    "content": chunk['content'],
-                    "score": min(score, 1.0),  # Cap at 1.0
-                    "metadata": {
-                        "document_id": chunk['document_id'],
-                        "document_name": chunk['document_name'],
-                        "page_number": chunk['page_number'],
-                        "position_on_page": chunk.get('position_on_page', 'unknown'),
-                        "chunk_index": chunk['chunk_index'],
-                        "char_length": chunk['char_length']
-                    }
-                })
+        # SEMANTIC SEARCH using embeddings
+        print(f"🔍 Semantic search for: {request.query}")
+        print(f"📋 Intent: {intent}")
         
-        # Sort by score (highest first)
-        results.sort(key=lambda x: x['score'], reverse=True)
+        if intent == 'overview':
+            # For overview questions, prioritize Abstract/Introduction
+            high_priority = get_high_priority_chunks()
+            semantic_results = semantic_search(request.query, top_k=request.top_k - len(high_priority))
+            
+            # Combine: high priority first, then semantic results
+            results = high_priority + semantic_results
+            print(f"✅ Retrieved {len(high_priority)} high-priority + {len(semantic_results)} semantic chunks")
+        else:
+            # Regular semantic search, exclude front-matter and references
+            results = semantic_search(request.query, top_k=request.top_k, exclude_types=['front_matter', 'references'])
+            print(f"✅ Retrieved {len(results)} chunks via semantic search")
         
-        # Limit to top_k
-        top_results = results[:request.top_k]
+        # Deduplicate by chunk_index
+        seen_indices = set()
+        deduped_results = []
+        for result in results:
+            idx = result['metadata']['chunk_index']
+            if idx not in seen_indices:
+                seen_indices.add(idx)
+                deduped_results.append(result)
+        
+        results = deduped_results[:request.top_k]
+        
+        # Log retrieved chunk types for debugging
+        chunk_types_retrieved = [r['metadata'].get('chunk_type', 'unknown') for r in results]
+        print(f"📊 Chunk types retrieved: {chunk_types_retrieved}")
+        
+        # Format results for response
+        top_results = results
         
         # Generate context-aware response with page citations
         response_text = None
@@ -497,7 +680,7 @@ async def query_documents(request: QueryRequest):
             # Build context for LLM
             context_for_llm = "\n\n".join([result['content'] for result in top_results[:3]])
             
-            # Use LLM to generate answer
+            # Use LLM to generate answer - ALWAYS synthesize, no score threshold
             try:
                 import google.generativeai as genai
                 import os
