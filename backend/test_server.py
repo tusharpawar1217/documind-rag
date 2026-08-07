@@ -16,6 +16,17 @@ from datetime import datetime
 import google.generativeai as genai
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+import tempfile
+
+# Import the new Unlimited-OCR service
+try:
+    from app.services.unlimited_ocr import unlimited_ocr_service
+    UNLIMITED_OCR_AVAILABLE = True
+    print("✅ Unlimited-OCR service imported successfully")
+except Exception as e:
+    UNLIMITED_OCR_AVAILABLE = False
+    print(f"⚠️ Unlimited-OCR not available: {e}")
+    print("📝 Falling back to PyMuPDF extraction")
 
 # Load environment variables
 load_dotenv()
@@ -271,7 +282,7 @@ async def clear_history(session_id: str = "default"):
 
 @app.post("/api/v1/documents/upload")
 async def upload_document(file: UploadFile = File(...)):
-    """Upload and process a PDF document with page-level tracking."""
+    """Upload and process a PDF document with advanced OCR extraction."""
     try:
         # Validate file type
         if not file.filename.endswith('.pdf'):
@@ -280,39 +291,100 @@ async def upload_document(file: UploadFile = File(...)):
         # Read file content
         content = await file.read()
         
-        # Extract text from PDF using PyMuPDF with page tracking
-        pdf_document = pymupdf.open(stream=content, filetype="pdf")
+        # Save temporary file for OCR processing
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+            tmp_file.write(content)
+            tmp_file_path = tmp_file.name
         
-        # Get page count before processing
-        num_pages = len(pdf_document)
+        try:
+            # Use intelligent extraction with Unlimited-OCR
+            if UNLIMITED_OCR_AVAILABLE:
+                print("🔍 Using Unlimited-OCR for advanced extraction...")
+                extracted_text = unlimited_ocr_service.intelligent_extract(tmp_file_path)
+                extraction_method = "Unlimited-OCR (Advanced)"
+            else:
+                print("📄 Using PyMuPDF fallback extraction...")
+                # Fallback to PyMuPDF
+                pdf_document = pymupdf.open(stream=content, filetype="pdf")
+                extracted_text = ""
+                for page in pdf_document:
+                    extracted_text += page.get_text() + "\n\n"
+                pdf_document.close()
+                extraction_method = "PyMuPDF (Fallback)"
+            
+            print(f"✅ Extracted {len(extracted_text)} characters using {extraction_method}")
+            
+            # Get page count for metadata
+            pdf_document = pymupdf.open(stream=content, filetype="pdf")
+            num_pages = len(pdf_document)
+            pdf_document.close()
+            
+            # Parse extracted text into structured pages
+            # Split by page markers if present, otherwise use intelligent chunking
+            page_texts = []
+            if "--- Page" in extracted_text:
+                # OCR result has page markers
+                page_sections = extracted_text.split("--- Page")[1:]  # Skip first empty split
+                for i, section in enumerate(page_sections):
+                    # Extract page number and text
+                    lines = section.strip().split('\n', 1)
+                    page_text = lines[1] if len(lines) > 1 else section.strip()
+                    page_texts.append({
+                        "page_num": i + 1,
+                        "text": page_text,
+                        "char_count": len(page_text)
+                    })
+            else:
+                # Estimate pages by content length
+                estimated_page_length = len(extracted_text) // max(num_pages, 1)
+                current_pos = 0
+                
+                for page_num in range(num_pages):
+                    start_pos = current_pos
+                    end_pos = min(current_pos + estimated_page_length, len(extracted_text))
+                    
+                    # Try to break at natural boundaries
+                    if end_pos < len(extracted_text):
+                        # Look for paragraph break within next 200 chars
+                        search_end = min(end_pos + 200, len(extracted_text))
+                        para_break = extracted_text.find('\n\n', end_pos, search_end)
+                        if para_break > 0:
+                            end_pos = para_break
+                    
+                    page_text = extracted_text[start_pos:end_pos].strip()
+                    page_texts.append({
+                        "page_num": page_num + 1,
+                        "text": page_text,
+                        "char_count": len(page_text)
+                    })
+                    current_pos = end_pos
         
-        all_text = ""
-        page_texts = []  # Store text per page
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(tmp_file_path)
+            except:
+                pass
+        
+        all_text = extracted_text
         chunk_index = 0
         
-        # Process each page separately
-        for page_num in range(num_pages):
-            page = pdf_document[page_num]
-            page_text = page.get_text()
+        # IMPROVED CHUNKING: Process all pages with overlapping chunks
+        chunk_size = 800  # Target chunk size in characters
+        chunk_overlap = 150  # Overlap between chunks for context continuity
+        
+        for page_data in page_texts:
+            page_num = page_data["page_num"] - 1  # 0-indexed for processing
+            page_text = page_data["text"]
             
-            # Store page text for reference
-            page_texts.append({
-                "page_num": page_num + 1,
-                "text": page_text,
-                "char_count": len(page_text)
-            })
+            if not page_text.strip():
+                continue
             
-            all_text += page_text + "\n\n"
-            
-            # IMPROVED CHUNKING: Recursive Character Text Splitter approach
-            # Try to split at natural boundaries with overlap
+            # Split into chunks with overlap
+            paragraphs = []
             
             # First, try paragraph boundaries
             raw_paragraphs = [p.strip() for p in page_text.split('\n\n') if p.strip()]
-            
-            paragraphs = []
-            chunk_size = 800  # Target chunk size in characters
-            chunk_overlap = 150  # Overlap between chunks for context continuity
             
             if raw_paragraphs:
                 # Process each paragraph
@@ -323,7 +395,6 @@ async def upload_document(file: UploadFile = File(...)):
                             paragraphs.append(para)
                     else:
                         # Split large paragraph by sentences
-                        # Split on multiple sentence endings
                         import re
                         sentences = re.split(r'(?<=[.!?])\s+', para)
                         
@@ -356,7 +427,7 @@ async def upload_document(file: UploadFile = File(...)):
                         if current_chunk and len(current_chunk.strip()) > 100:
                             paragraphs.append(current_chunk.strip())
             
-            # If still no good chunks, fall back to simple word-based splitting
+            # Fallback to word-based splitting if no good paragraphs
             if not paragraphs and page_text.strip():
                 words = page_text.split()
                 current_chunk = []
@@ -384,7 +455,7 @@ async def upload_document(file: UploadFile = File(...)):
             
             # Store chunks with page information, embeddings, and classification
             for para_idx, chunk_text in enumerate(paragraphs):
-                # Calculate position on page (beginning, middle, end)
+                # Calculate position on page
                 position_pct = (para_idx + 1) / len(paragraphs) if paragraphs else 0
                 if position_pct < 0.33:
                     position = "top"
@@ -410,7 +481,8 @@ async def upload_document(file: UploadFile = File(...)):
                     "paragraph_index": para_idx,
                     "char_length": len(chunk_text),
                     "page_total_chunks": len(paragraphs),
-                    "chunk_type": chunk_type,  # NEW: front_matter, content, high_priority_content, references
+                    "chunk_type": chunk_type,
+                    "extraction_method": extraction_method  # NEW: Track how content was extracted
                 }
                 
                 chunks_store.append(chunk_data)
@@ -423,15 +495,17 @@ async def upload_document(file: UploadFile = File(...)):
                 
                 chunk_index += 1
         
-        pdf_document.close()
-        
         # Count chunk types for stats
         chunk_types_count = {}
+        extraction_methods_count = {}
         for chunk in chunks_store[len(chunks_store) - chunk_index:]:
             ctype = chunk.get('chunk_type', 'content')
             chunk_types_count[ctype] = chunk_types_count.get(ctype, 0) + 1
+            
+            method = chunk.get('extraction_method', 'Unknown')
+            extraction_methods_count[method] = extraction_methods_count.get(method, 0) + 1
         
-        print(f"✅ Generated {chunk_index} embeddings")
+        print(f"✅ Generated {chunk_index} embeddings using {extraction_method}")
         print(f"📊 Chunk types: {chunk_types_count}")
         
         # Store document info
@@ -444,24 +518,32 @@ async def upload_document(file: UploadFile = File(...)):
             "num_chunks": chunk_index,
             "text_length": len(all_text),
             "pages_info": page_texts,
-            "chunk_types": chunk_types_count
+            "chunk_types": chunk_types_count,
+            "extraction_method": extraction_method
         }
         documents.append(doc_info)
         
         return {
             "status": "success",
-            "message": f"Document uploaded and processed successfully. Extracted {num_pages} pages and {chunk_index} chunks with embeddings.",
+            "message": f"Document uploaded and processed with {extraction_method}. Extracted {num_pages} pages and {chunk_index} chunks with embeddings.",
             "document": {
                 "id": doc_id,
                 "filename": file.filename,
                 "size": len(content),
                 "num_pages": num_pages,
                 "num_chunks": chunk_index,
-                "chunk_types": chunk_types_count
+                "chunk_types": chunk_types_count,
+                "extraction_method": extraction_method
             }
         }
         
     except Exception as e:
+        # Clean up temporary file on error
+        try:
+            if 'tmp_file_path' in locals():
+                os.unlink(tmp_file_path)
+        except:
+            pass
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
 
@@ -1117,21 +1199,185 @@ async def list_documents():
     }
 
 
-@app.get("/api/v1/documents/stats")
-async def get_statistics():
-    """Get document and chat statistics."""
-    total_size = sum(doc['size'] for doc in documents)
-    total_chunks = len(chunks_store)
-    total_chats = len(chat_history)
-    unique_sessions = len(set(msg.get('session_id', 'default') for msg in chat_history))
+@app.get("/api/v1/ocr/status")
+async def ocr_status():
+    """Get OCR system status and capabilities."""
+    ocr_info = {
+        "unlimited_ocr_available": UNLIMITED_OCR_AVAILABLE,
+        "pytorch_available": False,
+        "transformers_available": False,
+        "device": "cpu"
+    }
+    
+    # Check dependencies
+    try:
+        import torch
+        ocr_info["pytorch_available"] = True
+        ocr_info["device"] = "cuda" if torch.cuda.is_available() else "cpu"
+        ocr_info["torch_version"] = torch.__version__
+    except ImportError:
+        pass
+    
+    try:
+        import transformers
+        ocr_info["transformers_available"] = True
+        ocr_info["transformers_version"] = transformers.__version__
+    except ImportError:
+        pass
+    
+    if UNLIMITED_OCR_AVAILABLE:
+        try:
+            # Check if model can be initialized
+            if hasattr(unlimited_ocr_service, 'model_name'):
+                ocr_info["model_name"] = unlimited_ocr_service.model_name
+                ocr_info["model_device"] = unlimited_ocr_service.device
+        except Exception as e:
+            ocr_info["model_error"] = str(e)
     
     return {
-        "total_documents": len(documents),
-        "total_chunks": total_chunks,
-        "total_size": total_size,
-        "total_conversations": total_chats,
-        "active_sessions": unique_sessions
+        "status": "operational" if UNLIMITED_OCR_AVAILABLE else "fallback",
+        "ocr_engine": "Baidu Unlimited-OCR" if UNLIMITED_OCR_AVAILABLE else "PyMuPDF Basic",
+        "capabilities": {
+            "scanned_pdf_detection": UNLIMITED_OCR_AVAILABLE,
+            "advanced_ocr": UNLIMITED_OCR_AVAILABLE,
+            "intelligent_extraction": UNLIMITED_OCR_AVAILABLE,
+            "multi_page_parsing": UNLIMITED_OCR_AVAILABLE,
+            "image_processing": UNLIMITED_OCR_AVAILABLE
+        },
+        "system_info": ocr_info,
+        "description": "Advanced OCR with Baidu Unlimited-OCR for superior document parsing" if UNLIMITED_OCR_AVAILABLE else "Basic text extraction using PyMuPDF"
     }
+
+
+@app.post("/api/v1/ocr/test")
+async def test_ocr_extraction(file: UploadFile = File(...)):
+    """Test OCR extraction on a single document (demo endpoint)."""
+    try:
+        if not file.filename.endswith(('.pdf', '.png', '.jpg', '.jpeg')):
+            raise HTTPException(
+                status_code=400, 
+                detail="Supported formats: PDF, PNG, JPG, JPEG"
+            )
+        
+        content = await file.read()
+        
+        # Save temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file.filename[-4:]) as tmp_file:
+            tmp_file.write(content)
+            tmp_file_path = tmp_file.name
+        
+        extraction_results = {
+            "filename": file.filename,
+            "file_size": len(content),
+            "extraction_methods": {}
+        }
+        
+        try:
+            if file.filename.endswith('.pdf'):
+                # Test PDF extraction
+                if UNLIMITED_OCR_AVAILABLE:
+                    # Test intelligent extraction
+                    start_time = datetime.now()
+                    ocr_text = unlimited_ocr_service.intelligent_extract(tmp_file_path)
+                    ocr_duration = (datetime.now() - start_time).total_seconds()
+                    
+                    extraction_results["extraction_methods"]["unlimited_ocr"] = {
+                        "text_length": len(ocr_text),
+                        "extraction_time": ocr_duration,
+                        "preview": ocr_text[:500] + "..." if len(ocr_text) > 500 else ocr_text,
+                        "method": "Unlimited-OCR (Intelligent)"
+                    }
+                    
+                    # Test scanned detection
+                    is_scanned = unlimited_ocr_service.is_scanned_pdf(tmp_file_path)
+                    extraction_results["pdf_analysis"] = {
+                        "appears_scanned": is_scanned,
+                        "recommended_method": "OCR" if is_scanned else "PyMuPDF + OCR fallback"
+                    }
+                
+                # Also test PyMuPDF for comparison
+                start_time = datetime.now()
+                pdf_doc = pymupdf.open(stream=content, filetype="pdf")
+                basic_text = ""
+                for page in pdf_doc:
+                    basic_text += page.get_text()
+                pdf_doc.close()
+                basic_duration = (datetime.now() - start_time).total_seconds()
+                
+                extraction_results["extraction_methods"]["pymupdf_basic"] = {
+                    "text_length": len(basic_text),
+                    "extraction_time": basic_duration,
+                    "preview": basic_text[:500] + "..." if len(basic_text) > 500 else basic_text,
+                    "method": "PyMuPDF (Basic)"
+                }
+            
+            elif file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                # Test image OCR
+                if UNLIMITED_OCR_AVAILABLE:
+                    start_time = datetime.now()
+                    ocr_text = unlimited_ocr_service.extract_text_from_image(
+                        tmp_file_path,
+                        mode="gundam",  # Best for single images
+                        prompt="Extract all text from this image."
+                    )
+                    ocr_duration = (datetime.now() - start_time).total_seconds()
+                    
+                    extraction_results["extraction_methods"]["unlimited_ocr_image"] = {
+                        "text_length": len(ocr_text),
+                        "extraction_time": ocr_duration,
+                        "preview": ocr_text[:500] + "..." if len(ocr_text) > 500 else ocr_text,
+                        "method": "Unlimited-OCR (Image Mode)"
+                    }
+                else:
+                    extraction_results["extraction_methods"]["no_image_ocr"] = {
+                        "error": "Image OCR requires Unlimited-OCR dependencies",
+                        "fallback": "Upload as PDF for basic text extraction"
+                    }
+        
+        finally:
+            # Clean up
+            try:
+                os.unlink(tmp_file_path)
+            except:
+                pass
+        
+        # Performance comparison
+        if len(extraction_results["extraction_methods"]) > 1:
+            methods = extraction_results["extraction_methods"]
+            fastest_method = min(
+                methods.keys(),
+                key=lambda k: methods[k].get("extraction_time", float('inf'))
+            )
+            most_text = max(
+                methods.keys(),
+                key=lambda k: methods[k].get("text_length", 0)
+            )
+            
+            extraction_results["comparison"] = {
+                "fastest_extraction": fastest_method,
+                "most_comprehensive": most_text,
+                "methods_tested": len(methods)
+            }
+        
+        return {
+            "status": "success",
+            "message": "OCR extraction test completed",
+            "results": extraction_results,
+            "recommendations": {
+                "for_scanned_pdfs": "Use Unlimited-OCR for best accuracy",
+                "for_native_pdfs": "PyMuPDF is faster, OCR provides better completeness",
+                "for_images": "Unlimited-OCR required for text extraction"
+            }
+        }
+        
+    except Exception as e:
+        # Clean up on error
+        try:
+            if 'tmp_file_path' in locals():
+                os.unlink(tmp_file_path)
+        except:
+            pass
+        raise HTTPException(status_code=500, detail=f"OCR test failed: {str(e)}")
 
 
 @app.delete("/api/v1/documents/{document_id}")

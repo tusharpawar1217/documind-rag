@@ -6,11 +6,21 @@ pydantic-settings==2.1.0
 python-multipart==0.0.6
 aiofiles==23.2.1
 
-# Document Processing
-PyMuPDF==1.24.13
-Pillow==12.3.0
+# Document Processing & Advanced OCR
+PyMuPDF==1.27.2.2
+Pillow==12.1.1
 pytesseract==0.3.10
 pdf2image==1.16.3
+
+# Baidu Unlimited-OCR dependencies
+torch==2.10.0
+torchvision==0.25.0
+transformers==4.57.1
+matplotlib==3.10.8
+einops==0.8.2
+addict==2.4.0
+easydict==1.13
+psutil==7.2.2
 
 # NLP and Text Processing
 spacy==3.7.2
